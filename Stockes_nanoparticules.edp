@@ -1,0 +1,298 @@
+verbosity=0;
+
+// Nom du calcul
+string Name="Nanoparticule_stockes";
+// =====================
+// Domaine
+// =====================
+real a = 2.0, b = 1.0;
+real R = 0.15;
+real xC = a/2.0, yC = b/2.0; // centre du domaine
+real xC1 =0.5, yC1 =0.25;
+real xC2 =0.5, yC2 =0.75;
+real xc3=1.5, yc3=0.25;
+real xc4=1.5, yc4=0.75;
+
+// Bordures
+// label 1 : paroi bas  (y=0)
+// label 2 : sortie     (x=a)
+// label 3 : paroi haut (y=b)
+// label 4 : entree     (x=0)
+// label 5 : nanoparticule
+border b1(t=0,a){ x=t;   y=0;   label=1; }
+border b2(t=0,b){ x=a;   y=t;   label=2; }
+border b3(t=0,a){ x=a-t; y=b;   label=3; }
+border b4(t=0,b){ x=0;   y=b-t; label=4; }
+border hole1(t=2*pi,0){ x=xC+R*cos(t); y=yC+R*sin(t); label=5;}
+border hole2(t=2*pi,0){ x=xC1+R*cos(t); y=yC1+R*sin(t); label=6;}
+border hole3(t=2*pi,0){ x=xC2+R*cos(t); y=yC2+R*sin(t); label=7;}
+border hole4(t=2*pi,0){ x=xc3+R*cos(t); y=yc3+R*sin(t); label=8;}
+border hole5(t=2*pi,0){ x=xc4+R*cos(t); y=yc4+R*sin(t); label=9;}
+
+// =====================
+// Maillage
+// =====================
+int n = 30;
+mesh Th = buildmesh(b1(2*n)+b2(n)+b3(2*n)+b4(n)+hole1(8*n)+hole2(8*n)+hole3(8*n)+hole4(8*n)+hole5(8*n));
+Th = adaptmesh(Th, hmax=1./30., hmin=1./300.);
+plot(Th, wait=1, ps="mesh_nano.eps");
+
+// =====================
+// Parametres physiques
+// =====================
+real nu = 0.1;          // viscosite cinematique
+real Uin = 1.0;         // vitesse entree
+// =====================
+// Profil de vitesse à l'entrée : u_in
+// =====================
+// u_in représente le profil de vitesse imposé sur le bord d'entrée (label 4).
+//
+// Il s'agit d'un profil de Poiseuille (écoulement laminaire dans un canal) :
+//     u_in(y) = Uin * 4*y*(b - y) / b^2
+//
+// Propriétés :
+// - Vitesse nulle aux parois : u_in(0) = u_in(b) = 0 (condition de non-glissement)
+// - Vitesse maximale au centre du canal (y = b/2) : u_max = Uin
+// - Profil parabolique, physiquement réaliste pour un écoulement visqueux établi
+//
+// Ce profil est préférable à une vitesse constante car il respecte
+// les conditions physiques sur les parois et évite des singularités.
+//
+// Utilisation dans le code :
+//     on(4, u = u_in, v = 0)
+//
+// => impose une vitesse horizontale variable selon y à l'entrée,
+//    et aucune composante verticale.
+//
+// Remarque :
+// La vitesse moyenne du profil vaut (2/3)*Uin.
+func uin = Uin * 4*y*(b - y) / (b*b);
+// Force volumique
+func fx = 0.;
+func fy = 0.;
+
+// =====================
+// Espaces elements finis
+// Taylor-Hood P2-P1 : satisfait inf-sup
+// =====================
+fespace Vh(Th, P2);   // vitesse
+fespace Qh(Th, P1);   // pression
+
+Vh ux, vx;              // inconnues vitesse
+Vh uy, vy;            // fonctions test vitesse
+Qh p;                 // inconnue pression
+Qh q;                // fonction test pression
+
+// =====================
+// Formulation variationnelle de Stokes
+// Trouver (u,v,p) tq :
+// a(u,v) + b(v,p) = l(v)  pour tout (uu,vv)
+// b(u,pp) = 0              pour tout pp
+// =====================
+problem Stokes([ux, vx, p], [uy, vy, q],solver=UMFPACK)=
+    int2d(Th)(
+        // a(u,v) = nu * int(grad(u):grad(v))
+        nu*(  dx(ux)*dx(uy) + dy(ux)*dy(uy)
+            + dx(vx)*dx(vy) + dy(vx)*dy(vy))
+        // b(v,p) = -int(p*div(v))
+        - p*(dx(uy) + dy(vy))
+        // b(u,q) = -int(q*div(u))
+        - q*(dx(ux) + dy(vx))
+        // stabilisation pression (faible)
+        - 1.e-10*p*q
+    )
+    // second membre l(v) = int(f*v)
+    - int2d(Th)(fx*uy + fy*vy)
+    // Conditions aux limites
+    + on(1, ux=0, vx=0)           // paroi bas
+    + on(3, ux=0, vx=0)           // paroi haut
+    + on(4, ux=uin, vx=0)      // entree Poiseuille
+    + on(5, ux=0, vx=0)           // nanoparticule
+    + on(6, ux=0, vx=0)           // nanoparticule
+    + on(7, ux=0, vx=0)           // nanoparticule
+    + on(8, ux=0, vx=0)           // nanoparticule
+    + on(9, ux=0, vx=0)           // nanoparticule
+    // label 2 (sortie) : sigma*n=0, rien a imposer
+    ;
+
+// =====================
+// Resolution
+// =====================
+Stokes;
+
+// =====================
+// Calcul des efforts sur la nanoparticule
+// sigma = -pI + 2*nu*eps(u)
+// F = int_{Gamma_part} sigma*n ds
+// =====================
+
+// Force de trainee (direction x)
+real FD = int1d(Th, 5)(
+    -p*N.x
+    + 2*nu*(dx(ux)*N.x + 0.5*(dy(ux)+dx(vx))*N.y)
+);
+
+// Force de portance (direction y)
+real FL = int1d(Th, 5)(
+    -p*N.y
+    + 2*nu*(0.5*(dy(ux)+dx(vx))*N.x + dy(vx)*N.y)
+);
+
+cout << "=============================" << endl;
+cout << "Force de trainee FD = " << FD  << endl;
+cout << "Force de portance FL = " << FL  << endl;
+cout << "=============================" << endl;
+
+// Verification incompressibilite
+real divU = sqrt(int2d(Th)((dx(ux)+dy(vx))^2));
+cout << "||div(u)||_L2 = " << divU << endl;
+
+// =====================
+// Post-traitement
+// =====================
+plot(p, fill=true, value=true, wait=1, 
+     cmm="Pression p");
+
+plot([ux,vx], fill=true, value=true, wait=1, 
+     cmm="Champ de vitesse [ux,vx]");
+
+plot(p, [ux,vx], value=true, wait=1, 
+     cmm="Stokes stationnaire - Nanoparticule");
+
+// Sauvegarde pour Paraview
+{
+    ofstream fout("stokes_nano.dat");
+    fout << "x y u v p" << endl;
+    for(int i=0; i<Th.nv; i++){
+        fout << Th(i).x << " " 
+             << Th(i).y << " "
+             << ux(Th(i).x, Th(i).y) << " "
+             << vx(Th(i).x, Th(i).y) << " "
+             << p(Th(i).x, Th(i).y) << endl;
+    }
+}
+// ==========================================================
+// CALCUL DES CONTRAINTES DANS UN FLUIDE NEWTONIEN (STOKES)
+// ==========================================================
+//
+// Dans un écoulement de Stokes incompressible, les contraintes
+// internes du fluide sont décrites par le tenseur de Cauchy :
+//
+//      σ = -p I + 2 μ ε(u)
+//
+// où :
+//   - p   : pression du fluide
+//   - μ   : viscosité dynamique
+//   - ε(u): tenseur des taux de déformation
+//
+// Le tenseur de déformation représente les gradients symétrisés
+// du champ de vitesse :
+//
+//      ε(u) = 1/2 (∇u + (∇u)^T)
+//
+// On en déduit les composantes utiles :
+//   σ_xx : contrainte normale selon x (pression + viscosité)
+//   σ_yy : contrainte normale selon y
+//   σ_xy : contrainte de cisaillement (frottement)
+//
+// Ces quantités permettent ensuite de :
+//   - visualiser les zones de fort cisaillement
+//   - calculer les efforts exercés sur la nanoparticule
+//     via F = ∫_Γ σ · n ds
+//
+// Remarque importante :
+// Le critère de Von Mises utilisé ici est uniquement un
+// indicateur de magnitude des contraintes (visualisation).
+// Il n’a pas de signification de plasticité ici car le modèle
+// est purement fluide (et non solide).
+// ==========================================================
+
+////////////////////////////////////////////////////////////
+// CONTRAINTES DANS UN FLUIDE NEWTONIEN (STOKES)
+// σ = -p I + 2 μ ε(u)
+////////////////////////////////////////////////////////////
+
+real mu = nu; // viscosité dynamique
+
+fespace Wh(Th,P1dc);
+
+// Composantes du tenseur des contraintes
+Wh sxx = -p + 2*mu*dx(ux);
+Wh syy = -p + 2*mu*dy(vx);
+Wh sxy = mu*(dy(ux) + dx(vx));
+
+// Invariant type "Von Mises" (indicateur de contrainte)
+Wh vonMises = sqrt(
+      sxx^2 + syy^2 - sxx*syy
+    + 3*sxy^2
+);
+
+cout << "Contrainte max (Von Mises approx) = "
+     << vonMises[].max << endl;
+
+
+// pression moyenne (trace/3 en 2D simplifié)
+Wh pres=(sxx+syy)/2.; //  contrainte moyenne
+
+
+// norme du déviateur (intensité de cisaillement)
+Wh deviateur=sqrt(1.5*((sxx-pres)^2+(syy-pres)^2+2*sxy^2));
+cout<<"DevMax="<<deviateur[].max<<endl;// a comparere avac le seuil de plasticité
+plot(Th,deviateur, fill=true,value=true, ps="Dev.eps", wait=1);/// plot FreeFem de la solution
+plot(Th,pres, fill=true,value=true, ps="Pres.eps", wait=1);/// plot FreeFem de la solution
+////////////////////////////////////////////
+
+///////////////////Visualisation vtk
+fespace Rh(Th,P1dc);//espace de visualisation
+Rh   Xdes=x, Ydes=y, Zdes=0, devdes;
+int id;
+///visualisation maillage
+ofstream par("Maillage."+Name+".vtk"); // non du fichier qui contient le maillage
+Zdes=0;
+par <<"# vtk DataFile Version 1.0" <<endl;
+par <<"2D Unstructured Grid of Linear Triangles" <<endl;
+par <<"ASCII" <<endl;
+par <<" " <<endl;
+par <<"DATASET UNSTRUCTURED_GRID" <<endl;
+par <<"POINTS " << Rh.ndof<< " float" <<endl;
+for (id=0;id<Rh.ndof;id++) {par<< Xdes[][id] <<" "<< Ydes[][id]<<"  "<<  Zdes[][id]<<endl; }
+par <<"CELLS " <<  Rh.nt<< " " << (Rh.ndofK+1)*Rh.nt<<endl;
+for (id=0;id<Rh.nt;id++) {par<<"3 "<< Rh(id,0) <<" "<< Rh(id,1)<<" "<<Rh(id,2)<<endl; }
+par <<" " <<endl;
+par <<"CELL_TYPES " <<  Rh.nt<<endl;
+for (id=0;id<Rh.nt;id++) {par<<"5"<<endl; }
+///visualisation  de la piece deformée
+ofstream paru("Results"+Name+".vtk"); // nom du fichier qui contient les résultats
+real mag=1;
+Xdes=x; Ydes=y;
+Rh velx = ux;
+Rh vely = vx;
+Rh speed = sqrt(ux*ux + vx*vx);
+paru <<"# vtk DataFile Version 1.0" <<endl;
+paru <<"2D Unstructured Grid of Linear Triangles" <<endl;
+paru <<"ASCII" <<endl;
+paru <<" " <<endl;
+paru <<"DATASET UNSTRUCTURED_GRID" <<endl;
+paru <<"POINTS " << Rh.ndof<< " float" <<endl;
+for (id=0;id<Rh.ndof;id++) {paru<< Xdes[][id] <<" "<< Ydes[][id]<<"  "<<  Zdes[][id]<<endl; }
+paru <<"CELLS " <<  Rh.nt<< " " << (Rh.ndofK+1)*Rh.nt<<endl;
+for (id=0;id<Rh.nt;id++) {paru<<"3 "<< Rh(id,0) <<" "<< Rh(id,1)<<" "<<Rh(id,2)<<endl; }
+paru <<" " <<endl;
+paru <<"CELL_TYPES " <<  Rh.nt<<endl;
+for (id=0;id<Rh.nt;id++) {paru<<"5"<<endl; }
+// affichage sur la piece  de la vitesse et des contraintes
+paru <<" " <<endl;
+paru <<"POINT_DATA " <<  Rh.ndof<<endl;
+paru <<"VECTORS velocity float"<<endl;
+for (id=0;id<Rh.ndof;id++) {paru<< velx[][id] <<" "<< vely[][id] <<" 0"<<endl; }
+paru <<"SCALARS speed float"<<endl;
+paru <<"LOOKUP_TABLE default " <<endl;
+for (id=0;id<Rh.ndof;id++) {paru<< speed[][id] <<endl; }
+paru <<"SCALARS ContrainteVonMises float"<<endl;
+paru <<"LOOKUP_TABLE default " <<endl;
+devdes=deviateur;
+for (id=0;id<Rh.ndof;id++) {paru<<  devdes[][id]<<endl; }
+paru <<"SCALARS ContrainteMoyenne float"<<endl;
+paru <<"LOOKUP_TABLE default " <<endl;
+devdes=pres;
+for (id=0;id<Rh.ndof;id++) {paru<<  devdes[][id]<<endl; }
