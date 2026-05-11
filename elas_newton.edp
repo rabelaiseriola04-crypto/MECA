@@ -1,0 +1,270 @@
+// ============================================================
+//  FreeFEM++ - Elasticite non lineaire - Methode de Newton globale
+//
+//  Probleme complet :
+//    R(u)[v] = a(u,v) + r_contact(u)[v] + r_frot(u)[v] - ell(v;u) = 0
+//
+//  Trois non-linearites traitees simultanement par Newton :
+//    1. Lennard-Jones        : kappa(u^k) dans le Jacobien
+//    2. Signorini (penalise) : penalisation active sur zone de contact
+//    3. Coulomb (regularise) : rigidite tangentielle K_t dans le Jacobien
+//
+//  Jacobien complet a chaque iteration k :
+//    D R(u^k)[du,v] = a(du,v)
+//                   + int_Gamma_N  kappa^k * du_n * v_n
+//                   + int_Gamma_f  penC * 1_{u_n>g} * du_n * v_n
+//                   + int_Gamma_f  K_t^k * du_t * v_t
+//
+//  Convergence quadratique (vs lineaire pour Uzawa).
+// ============================================================
+
+// ------------------------------------------------------------
+// 1. PARAMETRES MATERIAUX
+// ------------------------------------------------------------
+real E  = 210e9;
+real nu = 0.3;
+
+real lambda = E*nu / ((1.+nu)*(1.-2.*nu));
+real mu     = E / (2.*(1.+nu));
+
+cout << "lambda = " << lambda << " Pa" << endl;
+cout << "mu     = " << mu     << " Pa" << endl;
+
+// ------------------------------------------------------------
+// 2. PARAMETRES DES NON-LINEARITES
+// ------------------------------------------------------------
+
+// --- Lennard-Jones ---
+real d0     = 0.01;     // distance d'equilibre [m]
+real epsLJ  = 1e-18;    // energie d'adhesion [J]
+
+// --- Frottement de Coulomb ---
+real muF    = 0.3;      // coefficient de frottement [-]
+real epsReg = 1e-6;     // regularisation |u_t| (evite division par 0)
+
+// --- Contact Signorini (penalisation) ---
+real penC   = 1e12;     // coefficient de penalisation [Pa/m]
+real gGap   = 0.0;      // jeu initial [m]
+
+// --- Donnees mecaniques ---
+func  f1  = 0.0;
+func  f2  = -1000.0;  // gravite 
+
+real Pfluide  = 5e4;      // pression fluide sur Gamma_N  (label 2)
+real sigNt    = 2e4;      // contrainte normale  Gamma_t  (label 3)
+real sigTf    = 5e3;      // contrainte tangentielle Gamma_f (label 4)
+
+// ------------------------------------------------------------
+// 3. PARAMETRES DE NEWTON
+// ------------------------------------------------------------
+int  iterMax = 30;
+real tol     = 1e-10;
+
+// ------------------------------------------------------------
+// 4. DOMAINE ET MAILLAGE
+// ------------------------------------------------------------
+real a  = 2.0;
+real b  = 1.0;
+real R  = 0.15;
+
+real xC  = a/2.0,  yC  = b/2.0;
+real xC1 = 0.5,    yC1 = 0.25;
+real xC2 = 0.5,    yC2 = 0.75;
+real xC3 = 1.5,    yC3 = 0.25;
+real xC4 = 1.5,    yC4 = 0.75;
+
+border b1(t=0,a){ x=t;   y=0;   label=1; }
+border b2(t=0,b){ x=a;   y=t;   label=2; }
+border b3(t=0,a){ x=a-t; y=b;   label=3; }
+border b4(t=0,b){ x=0;   y=b-t; label=4; }
+
+border hole1(t=2*pi,0){ x=xC +R*cos(t); y=yC +R*sin(t); label=5; }
+border hole2(t=2*pi,0){ x=xC1+R*cos(t); y=yC1+R*sin(t); label=6; }
+border hole3(t=2*pi,0){ x=xC2+R*cos(t); y=yC2+R*sin(t); label=7; }
+border hole4(t=2*pi,0){ x=xC3+R*cos(t); y=yC3+R*sin(t); label=8; }
+border hole5(t=2*pi,0){ x=xC4+R*cos(t); y=yC4+R*sin(t); label=9; }
+
+int n = 30;
+mesh Th = buildmesh(
+    b1(2*n)+b2(n)+b3(2*n)+b4(n)
+  + hole1(8*n)+hole2(8*n)+hole3(8*n)+hole4(8*n)+hole5(8*n)
+);
+
+// ------------------------------------------------------------
+// 5. ESPACES ELEMENTS FINIS
+// ------------------------------------------------------------
+fespace Vh(Th, P2);
+fespace Ph(Th, P1);
+
+Vh u1, u2;     // solution courante u^k
+Vh du1, du2;   // increment de Newton du
+Vh v1, v2;     // fonctions test
+
+// Initialisation : u^0 = 0
+u1 = 0.;  u2 = 0.;
+
+// ------------------------------------------------------------
+// 6. MACROS
+// ------------------------------------------------------------
+macro Div(w1,w2)  (dx(w1)+dy(w2))                                       //EOM
+
+macro Epseps(u1,u2,v1,v2)
+    ( dx(u1)*dx(v1) + dy(u2)*dy(v2)
+    + 0.5*(dy(u1)+dx(u2))*(dy(v1)+dx(v2)) )                            //EOM
+
+// Forme bilineaire elastique a(u,v)
+macro Abilin(u1,u2,v1,v2)
+    ( lambda*Div(u1,u2)*Div(v1,v2) + 2.*mu*Epseps(u1,u2,v1,v2) )      //EOM
+
+// Geometrie des bords :
+//   label 1 (y=0) : n = (0,-1)  =>  u_n = -u2,  u_t = u1
+//   label 2 (x=a) : n = ( 1, 0) =>  u_n =  u1,  u_t = u2
+//
+// Norme regularisee de la composante tangentielle sur label 1
+macro uTnorm(u1)  sqrt(u1*u1 + epsReg*epsReg)                          //EOM
+
+// Rigidite tangentielle Coulomb :
+//   K_t = d/du_t [ muF*|sigma_n| * u_t / |u_t|_eps ]
+//       = muF*|sigma_n| * eps^2 / |u_t|_eps^3
+macro Kt(sN,u1)  ( muF*abs(sN)*epsReg*epsReg / (uTnorm(u1)*uTnorm(u1)*uTnorm(u1)) ) //EOM
+
+// Indicatrice de la zone de contact active sur label 1 :
+//   contact actif si u_n = -u2 > gGap  <=>  -u2 - gGap > 0
+macro contactActive(u2)  ( (-u2 - gGap) > 0. ? 1. : 0. )              //EOM
+
+// Champ de distance LJ sur label 2 (u_n = u1, d = d0 - u1)
+// Protection contre d -> 0
+macro dLJ(u1)   max(d0 - u1, 1e-12)                                    //EOM
+
+// Force LJ  F(d) = 12*epsLJ/d0 * [ (d0/d)^13 - (d0/d)^7 ]
+macro FLJmac(u1) ( 12.*epsLJ/d0 * ( (d0/dLJ(u1))^13 - (d0/dLJ(u1))^7 ) ) //EOM
+
+// Rigidite tangente LJ  kappa = -dF/dd = 12*epsLJ/d0^2 * [13*(d0/d)^14 - 7*(d0/d)^8]
+macro kapLJ(u1) ( 12.*epsLJ/(d0*d0) * ( 13.*(d0/dLJ(u1))^14 - 7.*(d0/dLJ(u1))^8 ) ) //EOM
+
+// ------------------------------------------------------------
+// 7. BOUCLE DE NEWTON GLOBALE
+// ------------------------------------------------------------
+cout << "=============================================" << endl;
+cout << "  Newton global - demarrage" << endl;
+cout << "=============================================" << endl;
+
+for(int k = 0; k < iterMax; k++)
+{
+    // Contrainte normale courante sur label 1 (n = -e_y => sigma_n = sigma_22)
+    Ph sN;
+    sN = lambda*Div(u1,u2) + 2.*mu*dy(u2);
+
+    // ---- Systeme tangent : J^k * du = -R(u^k) ----
+    problem TangentNewton([du1,du2],[v1,v2], solver=UMFPACK)
+        =
+        // =====================================================
+        // JACOBIEN  D R(u^k)[du, v]
+        // =====================================================
+
+        // 1) Terme elastique lineaire : a(du, v)
+        int2d(Th)( Abilin(du1,du2,v1,v2) )
+
+        // 2) Rigidite LJ : kappa^k * du_n * v_n  sur Gamma_N (label 2, n=e_x)
+        //    d/du1 [ FLJ(d0-u1) ] = -dFLJ/dd = kappa
+        + int1d(Th,2)( kapLJ(u1) * du1 * v1 )
+
+        // 3) Penalisation Signorini linearisee : active sur zone de contact
+        //    r_contact = penC * [-u2 - gGap]_+   =>   d/du2 = -penC * 1_contact
+        + int1d(Th,1)( penC * contactActive(u2) * du2 * v2 )
+
+        // 4) Rigidite tangentielle Coulomb : K_t^k * du_t * v_t  sur label 1
+        //    d/du1 [ muF*|sN|*u1/|u1|_eps ] = K_t
+        + int1d(Th,1)( Kt(sN,u1) * du1 * v1 )
+
+        // =====================================================
+        // SECOND MEMBRE  -R(u^k)[v]
+        // =====================================================
+
+        // a(u^k, v)
+        + int2d(Th)( Abilin(u1,u2,v1,v2) )
+
+        // - forces volumiques
+        - int2d(Th)( f1*v1 + f2*v2 )
+
+        // - traction fluide sur Gamma_N (label 2)
+        - int1d(Th,2)( -Pfluide*(N.x*v1 + N.y*v2) )
+
+        // - force Lennard-Jones courante sur Gamma_N (label 2)
+        - int1d(Th,2)( FLJmac(u1)*(N.x*v1 + N.y*v2) )
+
+        // - contrainte normale sur Gamma_t (label 3)
+        - int1d(Th,3)( sigNt*(N.x*v1 + N.y*v2) )
+
+        // - contrainte tangentielle sur Gamma_f (label 4)
+        - int1d(Th,4)( sigTf*(-N.y*v1 + N.x*v2) )
+
+        // - penalisation Signorini : penC * [-u2-gGap]_+ * (-v2)
+        + int1d(Th,1)( penC * max(-u2 - gGap, 0.) * (-v2) )
+
+        // - frottement Coulomb regularise : muF*|sN|*u_t/|u_t|_eps
+        + int1d(Th,1)( muF*abs(sN) * u1/uTnorm(u1) * v1 )
+
+        // Condition de Dirichlet : encastrement Gamma_D (label 1)
+        + on(1, du1=0., du2=0.)
+    ;
+
+    TangentNewton;
+
+    // Mise a jour : u^{k+1} = u^k + du
+    u1[] += du1[];
+    u2[] += du2[];
+
+    // Critere de convergence
+    real normDu = sqrt(int2d(Th)(du1^2 + du2^2));
+    real normU  = sqrt(int2d(Th)(u1^2  + u2^2 ));
+    real relErr = normDu / (normU + 1e-30);
+
+    cout << "  iter " << k+1
+         << "  ||du||/||u|| = " << relErr
+         << "  ||du|| = "       << normDu << endl;
+
+    if(relErr < tol){
+        cout << "  --> Convergence atteinte a l'iteration " << k+1 << endl;
+        break;
+    }
+    if(k == iterMax-1)
+        cout << "  ATTENTION : Newton non converge en "
+             << iterMax << " iterations." << endl;
+}
+
+cout << "=============================================" << endl;
+
+// ------------------------------------------------------------
+// 8. POST-TRAITEMENT
+// ------------------------------------------------------------
+Ph sigma11, sigma22, sigma12, vonMises, sigmaN;
+
+sigma11  = lambda*(dx(u1)+dy(u2)) + 2.*mu*dx(u1);
+sigma22  = lambda*(dx(u1)+dy(u2)) + 2.*mu*dy(u2);
+sigma12  = mu*(dy(u1)+dx(u2));
+vonMises = sqrt(sigma11^2 - sigma11*sigma22 + sigma22^2 + 3.*sigma12^2);
+sigmaN   = sigma22;   // sigma_n = sigma_22 sur label 1 (n = -e_y)
+
+real normUf = sqrt(int2d(Th)(u1^2 + u2^2));
+cout << "||u||_L2   = " << normUf         << " m"   << endl;
+cout << "u1_max     = " << u1[].max       << " m"   << endl;
+cout << "u2_min     = " << u2[].min       << " m"   << endl;
+cout << "VM_max     = " << vonMises[].max << " Pa"  << endl;
+cout << "sigmaN_min = " << sigmaN[].min   << " Pa"  << endl;
+
+plot([u1,u2], wait=true, value=true, fill=true,
+     cmm="Deplacement [m] - Newton global");
+plot(vonMises, wait=true, value=true, fill=true,
+    cmm="Von Mises [Pa] - Newton global");
+
+mesh Thdef = movemesh(Th, [x+u1, y+u2]);
+plot(Thdef, wait=true, cmm="Maillage deforme");
+
+load "iovtk"
+
+savevtk("elasticite_newton_nl.vtk", Th,
+        [u1,u2,0], vonMises, sigma11, sigma22, sigma12, sigmaN,
+        dataname="Deplacement vonMises Sxx Syy Sxy SigmaN");
+
+cout << "Fichier VTK sauvegarde : elasticite_newton_nl.vtk" << endl;
