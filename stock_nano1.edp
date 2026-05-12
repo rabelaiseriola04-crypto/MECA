@@ -1,0 +1,304 @@
+verbosity=0;
+
+// Nom du calcul
+string Name="Nanoparticule1";
+/////////////////////////////////fluide /////////////////////////////////////////
+real Vc=1; //m/sec
+real Lc=1e-09;// m
+real etac=0.001;//Pasec eau viscosité cinématique de l'eau
+//real etac=0.00001;//Pasec air
+real rhoc=1000; //Kg/M^3  eau
+//real rhoc=1; //Kg/M^3 air
+//real Pc=etac*Vc/Lc;//en Pa,  Pc=1Mpa eau et Pc = 10KPa pour air
+real Pc=10^6; //en Pa,  Pc=1Mpa eau et Pc = 10KPa pour air
+real Re=rhoc*Lc*Vc/etac;
+cout<<"Re="<<Re<<endl;
+real eta=1.*etac*Vc/(Lc*Pc); // constantes adimensionnelles  eau
+// real eta=1.85; // constantes adimensionnelles  air
+
+//construction du domaine
+real e=5.,a=2*e, dl=a, d=2*e;
+real xA=0., yA=0., xD=0,yD=5*e, eTiO2=1.5*e,  xH=0.,yH=yD+eTiO2, xI=0,yI=6*e+yH;
+real xG=dl+2*a+2*dl, yG=yH, xF=xG+2*a, yF=yH;
+real xE=xF+2*dl+2*a+dl,yE=yH,  xJ=xE, yJ=yI, xC=xE, yC=yD,  xB=xE,yB=0.;
+
+
+// ---------------- Domaine FLUIDE --------------------
+border SFE(t=0,1){ x=xF+t*(xE-xF); y=yF+t*(yE-yF);label=1; }
+border SGF(t=pi,0.) {x=xG+a+a*cos(t);y=yE+d*sin(t); label=5;}
+border SHG(t=0,1){ x=xH+t*(xG-xH); y=yH+t*(yG-yH);label=1; }
+border SIH(t=0,1){ x=xI+t*(xH-xI); y=yI+t*(yH-yI);label=4; }
+border SJI(t=0,1){ x=xJ+t*(xI-xJ); y=yJ+t*(yI-yJ);label=3; }
+border SEJ(t=0,1){ x=xE+t*(xJ-xE); y=yE+t*(yJ-yE);label=2; }
+
+// Maillage fluide
+int me=5, mv=6*me, mh=me*xJ/e, mdl=3*me*dl/e, Melip=3*8*me, mv1=5*me, mv2=1.5*me;
+
+real H=0.001/Lc;// distance entre deux plaque
+
+real LFiltre=0.08/Lc;// longuer des plaque
+real PDif=0.017*10^6/Pc; // difference entre la pression d'entrée et de sortie
+
+real C=-PDif/LFiltre;// chute lineique de pression
+real PEntry=0.5*PDif;// surplus de la pression atmospherique qui agit à l'entreée de la cellule de calcul
+real DeltaP=-C*xE;// chute de pression dans la cellule de calcul
+//////Profil de vitesse dans l'ecoullment entre deux plaques
+func real VV(real yy) {return C*(yy-H)*yy/(2*eta); }
+real  V=VV(yJ-yH); // Vitesse en haut de la cellule de calcul
+cout<<"V="<<V<<endl;
+
+
+real eps=0.0000000000001; // V imposed velocity
+
+plot(SHG(Melip+3*mdl)+SGF(Melip)+SFE(Melip+3*mdl)+SIH(mv)+SJI(mh)+SEJ(mv));
+mesh ThF=buildmesh(SHG(Melip+3*mdl)+SGF(Melip)+SFE(Melip+3*mdl)+SIH(mv)+SJI(mh)+SEJ(mv));
+plot(ThF,wait=true);
+
+func real Dist(real xx, real yy) {
+  if(xx<=xG) return yy-yH;
+  if((xx>xG)&&(xx<xF))   return yy-(yH+e*sqrt(1-((xx-xG-a)/a)^2));
+  return yy-yH;
+}
+
+fespace VhF(ThF,P2);
+VhF fhF=Dist(x,y)/(5*e), Smesh;
+real hminF=0.5*dl/mdl, hmaxF=20*hminF;
+Smesh=hmaxF*fhF + hminF*(1-fhF);
+cout<<hminF<<" "<<hmaxF<<" "<<Smesh[].min<<" "<<Smesh[].max<<endl;
+plot(ThF,Smesh, fill=true, wait=true);
+mesh Th=adaptmesh(ThF,Smesh, hmin=hminF,hmax=hmaxF, IsMetric=1, err=0.01, nbvx=100000);
+plot(Th,wait=true);
+// =====================
+// Parametres physiques
+// =====================
+real nu = 0.1;          // viscosite cinematique
+// Force volumique
+func fx = 0.0;
+func fy = 0.0;
+// =====================
+// Espaces elements finis
+// Taylor-Hood P2-P1 : satisfait inf-sup
+// =====================
+fespace Vh(Th, P2);   // vitesse
+fespace Qh(Th, P1);   // pression
+
+Vh ux, uy;              // inconnues vitesse
+Vh vx, vy;            // fonctions test vitesse
+Qh p;                 // inconnue pression
+Qh q;                // fonction test pression
+
+// =====================
+// Formulation variationnelle de Stokes
+// Trouver (u,v,p) tq :
+// a(u,v) + b(v,p) = l(v)  pour tout (uu,vv)
+// b(u,pp) = 0              pour tout pp
+// =====================
+problem Stokes([ux, uy, p], [vx, vy, q],solver=UMFPACK)=
+    int2d(Th)(
+        // a(u,v) = nu * int(grad(u):grad(v))
+        nu*(  dx(ux)*dx(vx) + dy(ux)*dy(vx)
+            + dx(uy)*dx(vy) + dy(uy)*dy(vy))
+        // b(v,p) = -int(p*div(v))
+        - p*(dx(vx) + dy(vy))
+        // b(u,q) = -int(q*div(u))
+        - q*(dx(ux) + dy(uy))
+        // stabilisation pression (faible)
+        - 1.e-10*p*q
+    )
+    // second membre l(v) = int(f*v)
+    - int2d(Th)(fx*vx + fy*vy)
+    // Conditions aux limites
+    + on(1,ux=0.,uy=0.)
+    +on(5, ux=0., uy=0.)
+    + on(4,ux=VV(y-yH), uy=0.) 
+    + on(3,ux=V, uy=0) 
+    + on(2,ux=VV(y-yH), uy=0.);
+    
+Stokes;
+
+ 
+    // label 2 (sortie) : sigma*n=0, rien a imposer
+    ;
+
+// =====================
+// Resolution
+// =====================
+Stokes;
+
+// =====================
+// Calcul des efforts sur la nanoparticule
+// sigma = -pI + 2*nu*eps(u)
+// F = int_{Gamma_part} sigma*n ds
+// =====================
+
+cout.precision(12);
+// Force de trainee (direction x)
+real FD = int1d(Th, 5)(
+    -p*N.x
+    + 2*nu*(dx(ux)*N.x + 0.5*(dy(ux)+dx(uy))*N.y)
+);
+
+// Force de portance (direction y)
+real FL = int1d(Th, 5)(
+    -p*N.y
+    + 2*nu*(0.5*(dy(ux)+dx(uy))*N.x + dy(uy)*N.y)
+);
+
+cout << "=============================" << endl;
+cout << "Force de trainee FD = " << FD  << endl;
+cout << "Force de portance FL = " << FL  << endl;
+cout << "=============================" << endl;
+
+// Verification incompressibilite
+real divU = sqrt(int2d(Th)((dx(ux)+dy(uy))^2));
+cout << "||div(u)||_L2 = " << divU << endl;
+
+// =====================
+// Post-traitement
+// =====================
+plot(p, fill=true, value=true, wait=1, 
+     cmm="Pression p");
+
+plot([ux,uy], fill=true, value=true, wait=1, 
+     cmm="Champ de vitesse [ux,uy]");
+
+plot(p, [ux,uy], value=true, wait=1, 
+     cmm="Stokes stationnaire - Nanoparticule");
+
+// Sauvegarde pour Paraview
+{
+    ofstream fout("stokes_nano.dat");
+    fout << "x y u v p" << endl;
+    for(int i=0; i<Th.nv; i++){
+        fout << Th(i).x << " " 
+             << Th(i).y << " "
+             << ux(Th(i).x, Th(i).y) << " "
+             << uy(Th(i).x, Th(i).y) << " "
+             << p(Th(i).x, Th(i).y) << endl;
+    }
+}
+// ==========================================================
+// CALCUL DES CONTRAINTES DANS UN FLUIDE NEWTONIEN (STOKES)
+// ==========================================================
+//
+// Dans un écoulement de Stokes incompressible, les contraintes
+// internes du fluide sont décrites par le tenseur de Cauchy :
+//
+//      σ = -p I + 2 μ ε(u)
+//
+// où :
+//   - p   : pression du fluide
+//   - μ   : viscosité dynamique
+//   - ε(u): tenseur des taux de déformation
+//
+// Le tenseur de déformation représente les gradients symétrisés
+// du champ de vitesse :
+//
+//      ε(u) = 1/2 (∇u + (∇u)^T)
+//
+// On en déduit les composantes utiles :
+//   σ_xx : contrainte normale selon x (pression + viscosité)
+//   σ_yy : contrainte normale selon y
+//   σ_xy : contrainte de cisaillement (frottement)
+//
+// Ces quantités permettent ensuite de :
+//   - visualiser les zones de fort cisaillement
+//   - calculer les efforts exercés sur la nanoparticule
+//     via F = ∫_Γ σ · n ds
+//
+// Remarque importante :
+// Le critère de Von Mises utilisé ici est uniquement un
+// indicateur de magnitude des contraintes (visualisation).
+// Il n’a pas de signification de plasticité ici car le modèle
+// est purement fluide (et non solide).
+// ==========================================================
+
+////////////////////////////////////////////////////////////
+// CONTRAINTES DANS UN FLUIDE NEWTONIEN (STOKES)
+// σ = -p I + 2 μ ε(u)
+////////////////////////////////////////////////////////////
+
+real mu = nu; // viscosité dynamique
+
+fespace Wh(Th,P1dc);
+
+// Composantes du tenseur des contraintes
+Wh sxx = -p + 2*mu*dx(ux);
+Wh syy = -p + 2*mu*dy(uy);
+Wh sxy = mu*(dy(ux) + dx(uy));
+
+// Invariant type "Von Mises" (indicateur de contrainte)
+Wh vonMises = sqrt(
+      sxx^2 + syy^2 - sxx*syy
+    + 3*sxy^2
+);
+
+cout << "Contrainte max (Von Mises approx) = "
+     << vonMises[].max << endl;
+
+
+// pression moyenne (trace/3 en 2D simplifié)
+Wh pres=(sxx+syy)/2.; //  contrainte moyenne
+
+
+// norme du déviateur (intensité de cisaillement)
+Wh deviateur=sqrt(1.5*((sxx-pres)^2+(syy-pres)^2+2*sxy^2));
+cout<<"DevMax="<<deviateur[].max<<endl;// a comparere avac le seuil de plasticité
+plot(Th,deviateur, fill=true,value=true, ps="Dev.eps", wait=1);/// plot FreeFem de la solution
+plot(Th,pres, fill=true,value=true, ps="Pres.eps", wait=1);/// plot FreeFem de la solution
+////////////////////////////////////////////
+
+///////////////////Visualisation vtk
+fespace Rh(Th,P1dc);//espace de visualisation
+Rh   Xdes=x, Ydes=y, Zdes=0, devdes;
+int id;
+///visualisation maillage
+ofstream par("Maillage."+Name+".vtk"); // non du fichier qui contient le maillage
+Zdes=0;
+par <<"# vtk DataFile Version 1.0" <<endl;
+par <<"2D Unstructured Grid of Linear Triangles" <<endl;
+par <<"ASCII" <<endl;
+par <<" " <<endl;
+par <<"DATASET UNSTRUCTURED_GRID" <<endl;
+par <<"POINTS " << Rh.ndof<< " float" <<endl;
+for (id=0;id<Rh.ndof;id++) {par<< Xdes[][id] <<" "<< Ydes[][id]<<"  "<<  Zdes[][id]<<endl; }
+par <<"CELLS " <<  Rh.nt<< " " << (Rh.ndofK+1)*Rh.nt<<endl;
+for (id=0;id<Rh.nt;id++) {par<<"3 "<< Rh(id,0) <<" "<< Rh(id,1)<<" "<<Rh(id,2)<<endl; }
+par <<" " <<endl;
+par <<"CELL_TYPES " <<  Rh.nt<<endl;
+for (id=0;id<Rh.nt;id++) {par<<"5"<<endl; }
+///visualisation  de la piece deformée
+ofstream paru("Results"+Name+".vtk"); // nom du fichier qui contient les résultats
+real mag=1;
+Xdes=x; Ydes=y;
+Rh velx = ux;
+Rh vely = uy;
+Rh speed = sqrt(ux*ux + uy*uy);
+paru <<"# vtk DataFile Version 1.0" <<endl;
+paru <<"2D Unstructured Grid of Linear Triangles" <<endl;
+paru <<"ASCII" <<endl;
+paru <<" " <<endl;
+paru <<"DATASET UNSTRUCTURED_GRID" <<endl;
+paru <<"POINTS " << Rh.ndof<< " float" <<endl;
+for (id=0;id<Rh.ndof;id++) {paru<< Xdes[][id] <<" "<< Ydes[][id]<<"  "<<  Zdes[][id]<<endl; }
+paru <<"CELLS " <<  Rh.nt<< " " << (Rh.ndofK+1)*Rh.nt<<endl;
+for (id=0;id<Rh.nt;id++) {paru<<"3 "<< Rh(id,0) <<" "<< Rh(id,1)<<" "<<Rh(id,2)<<endl; }
+paru <<" " <<endl;
+paru <<"CELL_TYPES " <<  Rh.nt<<endl;
+for (id=0;id<Rh.nt;id++) {paru<<"5"<<endl; }
+// affichage sur la piece  de la vitesse et des contraintes
+paru <<" " <<endl;
+paru <<"POINT_DATA " <<  Rh.ndof<<endl;
+paru <<"VECTORS velocity float"<<endl;
+for (id=0;id<Rh.ndof;id++) {paru<< velx[][id] <<" "<< vely[][id] <<" 0"<<endl; }
+paru <<"SCALARS speed float"<<endl;
+paru <<"LOOKUP_TABLE default " <<endl;
+for (id=0;id<Rh.ndof;id++) {paru<< speed[][id] <<endl; }
+paru <<"SCALARS ContrainteVonMises float"<<endl;
+paru <<"LOOKUP_TABLE default " <<endl;
+devdes=deviateur;
+for (id=0;id<Rh.ndof;id++) {paru<<  devdes[][id]<<endl; }
+paru <<"SCALARS ContrainteMoyenne float"<<endl;
+paru <<"LOOKUP_TABLE default " <<endl;
+devdes=pres;
+for (id=0;id<Rh.ndof;id++) {paru<<  devdes[][id]<<endl; }

@@ -1,0 +1,311 @@
+// ============================================================
+//  FreeFEM++ - Elasticite non lineaire - Newton global
+//  Adapte au maillage substrat + 3 nanoparticules (multi-materiau)
+// ============================================================
+
+verbosity = 0;
+string Name = "Solide_Nano";
+
+// ------------------------------------------------------------
+// 1. PARAMETRES MATERIAUX (multi-region)
+// ------------------------------------------------------------
+real lambda1 = 89488.63,  mu1 = 70312.5;     // substrat (region 1)
+real lambda2 = 115542.62, mu2 = 98425.19;    // couche TiO2 (region 2)
+real lambda3 = 86215.6,   mu3 = 30291.97;    // nanoparticules (regions 3-5)
+
+cout << "Substrat       : lambda = " << lambda1 << "  mu = " << mu1 << endl;
+cout << "Couche TiO2    : lambda = " << lambda2 << "  mu = " << mu2 << endl;
+cout << "Nanoparticules : lambda = " << lambda3 << "  mu = " << mu3 << endl;
+
+// ------------------------------------------------------------
+// 2. PARAMETRES DES NON-LINEARITES
+// ------------------------------------------------------------
+// --- Lennard-Jones (sur label 3, face fluide) ---
+real d0     = 0.01;
+real epsLJ  = 1e-18;
+
+// --- Frottement de Coulomb (sur label 1, base encastrement) ---
+real muF    = 0.3;
+real epsReg = 1e-6;
+
+// --- Contact Signorini penalise (sur label 1) ---
+real penC   = 1e12;
+real gGap   = 0.0;
+
+// --- Chargement ---
+func f1 = 0.0;
+func f2 = -1000.0;          // gravite
+real Pfluide = 5e4;         // pression fluide sur label 3 (top + nano)
+real sigNt   = 2e4;         // contrainte normale sur label 2 (cote droit)
+real sigTf   = 5e3;         // contrainte tangentielle sur label 4 (cote gauche)
+
+// ------------------------------------------------------------
+// 3. PARAMETRES NEWTON
+// ------------------------------------------------------------
+int  iterMax = 30;
+real tol     = 1e-10;
+
+// ------------------------------------------------------------
+// 4. GEOMETRIE DU DOMAINE SOLIDE
+// ------------------------------------------------------------
+real e = 5., a = 2*e, dl = a, d = 2*e;
+real xA = 0.,  yA = 0.,  xD = 0,  yD = 5*e, eTiO2 = 1.5*e;
+real xL = 0.,  yL = yD + eTiO2;
+real xK = dl,        yK = yL;
+real xJ = xK + 2*a,  yJ = yL;
+real xI = xJ + 2*dl, yI = yK;
+real xH = xI + 2*a,  yH = yK;
+real xG = xH + 2*dl, yG = yK;
+real xF = xG + 2*a,  yF = yL;
+real xE = xF + dl,   yE = yL;
+real xC = xE,        yC = yD;
+real xB = xE,        yB = 0.;
+
+// Densites de discretisation
+int  me = 5;
+int  mv = 6*me;
+int  mh = me*xE/e;
+int  mdl = 3*me*dl/e;
+int  Melip = 3*8*me;
+int  mv1 = 5*me;
+int  mv2 = 1.5*me;
+
+// ------------------------------------------------------------
+// 5. FRONTIERES (avec convention des labels)
+//   label 1 : bord inferieur                  -> encastrement (Dirichlet)
+//   label 2 : bord droit (vertical)           -> contrainte normale sigNt
+//   label 3 : bord superieur + nanoparticules -> pression fluide + LJ
+//   label 4 : bord gauche (vertical)          -> contrainte tangentielle sigTf
+//   label 5 : interfaces base de nanoparticule (internes)
+//   label 6 : interface substrat / TiO2 (interne)
+// ------------------------------------------------------------
+border SAB(t=0,1){ x=xA+t*(xB-xA); y=yA+t*(yB-yA); label=1; } // bas
+border SBC(t=0,1){ x=xB+t*(xC-xB); y=yB+t*(yC-yB); label=2; } // droite (bas)
+border SCE(t=0,1){ x=xC+t*(xE-xC); y=yC+t*(yE-yC); label=2; } // droite (haut)
+border SEF(t=0,1){ x=xE+t*(xF-xE); y=yE+t*(yF-yE); label=3; } // dessus (plat)
+border SFG(t=0.,pi){ x=xG+a+a*cos(t); y=yE+d*sin(t); label=3; } // nano 3
+border SGH(t=0,1){ x=xG+t*(xH-xG); y=yG+t*(yH-yG); label=3; } // dessus (plat)
+border SHI(t=0.,pi){ x=xI+a+a*cos(t); y=yL+d*sin(t); label=3; } // nano 2
+border SIJ(t=0,1){ x=xI+t*(xJ-xI); y=yI+t*(yJ-yI); label=3; } // dessus (plat)
+border SJK(t=0.,pi){ x=xK+a+a*cos(t); y=yE+d*sin(t); label=3; } // nano 1
+border SKL(t=0,1){ x=xK+t*(xL-xK); y=yK+t*(yL-yK); label=3; } // dessus (plat)
+border SLD(t=0,1){ x=xL+t*(xD-xL); y=yL+t*(yD-yL); label=4; } // gauche (haut)
+border SDA(t=0,1){ x=xD+t*(xA-xD); y=yD+t*(yA-yD); label=4; } // gauche (bas)
+
+// Interfaces internes (multi-region)
+border SDC(t=0,1){ x=xD+t*(xC-xD); y=yD+t*(yC-yD); label=6; } // substrat / TiO2
+border SVW(t=0,1){ x=xG+t*(xF-xG); y=yG+t*(yF-yG); label=5; } // base nano 3
+border SXY(t=0,1){ x=xI+t*(xH-xI); y=yI+t*(yH-yI); label=5; } // base nano 2
+border SOZ(t=0,1){ x=xK+t*(xJ-xK); y=yK+t*(yJ-yK); label=5; } // base nano 1
+
+// ------------------------------------------------------------
+// 6. CONSTRUCTION DU MAILLAGE SOLIDE
+// ------------------------------------------------------------
+mesh ThS = buildmesh(
+    SAB(mh)   + SDC(mh)   + SBC(mv1)  + SDA(mv1)
+  + SCE(mv2)  + SLD(mv2)
+  + SEF(mdl)  + SFG(Melip)+ SGH(2*mdl)+ SHI(Melip)
+  + SIJ(2*mdl)+ SJK(Melip)+ SKL(mdl)
+  + SVW(2*mdl)+ SXY(2*mdl)+ SOZ(2*mdl)
+);
+plot(ThS, wait=true, cmm="Maillage solide initial");
+
+// Raffinement par metrique (proche de la face fluide y=yL)
+func real Dist3(real xx, real yy) { return abs(yy - yL); }
+
+fespace VhS0(ThS, P2);
+VhS0 fhS = Dist3(x,y)/(5*e), Smesh2;
+real hminS = 0.1*dl/mdl, hmaxS = 100*hminS;
+Smesh2 = hmaxS*fhS + hminS*(1 - fhS);
+cout << "hminS=" << hminS << "  hmaxS=" << hmaxS
+     << "  Smesh2 in [" << Smesh2[].min << ", " << Smesh2[].max << "]" << endl;
+
+ThS = adaptmesh(ThS, Smesh2, hmin=hminS, hmax=hmaxS,
+                IsMetric=1, err=0.01, nbvx=100000);
+plot(ThS, wait=true, cmm="Maillage solide adapte");
+
+// ------------------------------------------------------------
+// 7. AFFECTATION DES MATERIAUX PAR REGION
+// ------------------------------------------------------------
+fespace Reg(ThS, P0);
+Reg reg = region;
+
+fespace Oh(ThS, P1dc);
+Oh lambda, mu;
+
+// Points-test dans chaque region
+real x1 = (xA+xB)/2, y1 = (yA+yD)/2;      // substrat
+real x2 = x1,        y2 = (yD+yL)/2;      // TiO2
+real x3 = (xK+xJ)/2, y3 = yL + e/2;        // nano 1
+real x4 = (xH+xI)/2, y4 = yL + e/2;        // nano 2
+real x5 = (xG+xF)/2, y5 = yL + e/2;        // nano 3
+
+lambda = lambda1*(reg==reg(x1,y1))
+       + lambda2*(reg==reg(x2,y2))
+       + lambda3*(reg==reg(x3,y3))
+       + lambda3*(reg==reg(x4,y4))
+       + lambda3*(reg==reg(x5,y5));
+mu     = mu1*(reg==reg(x1,y1))
+       + mu2*(reg==reg(x2,y2))
+       + mu3*(reg==reg(x3,y3))
+       + mu3*(reg==reg(x4,y4))
+       + mu3*(reg==reg(x5,y5));
+
+plot(lambda, fill=true, value=true, wait=true, cmm="lambda (Pa)");
+plot(mu,     fill=true, value=true, wait=true, cmm="mu (Pa)");
+
+// ------------------------------------------------------------
+// 8. ESPACES ELEMENTS FINIS
+// ------------------------------------------------------------
+fespace Vh(ThS, P2);
+fespace Ph(ThS, P1);
+
+Vh u1, u2;     // solution u^k
+Vh du1, du2;   // increment de Newton
+Vh v1, v2;     // test
+
+u1 = 0.;  u2 = 0.;
+
+// ------------------------------------------------------------
+// 9. MACROS (lambda, mu sont maintenant des champs)
+// ------------------------------------------------------------
+macro Div(w1,w2)  (dx(w1)+dy(w2))                                            //EOM
+
+macro Epseps(u1,u2,v1,v2)
+    ( dx(u1)*dx(v1) + dy(u2)*dy(v2)
+    + 0.5*(dy(u1)+dx(u2))*(dy(v1)+dx(v2)) )                                  //EOM
+
+macro Abilin(u1,u2,v1,v2)
+    ( lambda*Div(u1,u2)*Div(v1,v2) + 2.*mu*Epseps(u1,u2,v1,v2) )             //EOM
+
+// --- Composantes normale/tangentielle au label 1 (n = -e_y) ---
+//     u_n = -u2,   u_t = u1
+macro uTnorm(u1)  sqrt(u1*u1 + epsReg*epsReg)                                //EOM
+macro Kt(sN,u1)   ( muF*abs(sN)*epsReg*epsReg /
+                    (uTnorm(u1)*uTnorm(u1)*uTnorm(u1)) )                     //EOM
+macro contactActive(u2)  ( (-u2 - gGap) > 0. ? 1. : 0. )                     //EOM
+
+// --- Lennard-Jones sur label 3 (face fluide, normale ~ +e_y en partie plate) ---
+//     pour la composante normale on prend u2 (deplacement vertical)
+macro dLJ(u2)     max(d0 - u2, 1e-12)                                         //EOM
+macro FLJmac(u2)  ( 12.*epsLJ/d0 * ( (d0/dLJ(u2))^13 - (d0/dLJ(u2))^7 ) )    //EOM
+macro kapLJ(u2)   ( 12.*epsLJ/(d0*d0) *
+                    ( 13.*(d0/dLJ(u2))^14 - 7.*(d0/dLJ(u2))^8 ) )           //EOM
+
+// ------------------------------------------------------------
+// 10. BOUCLE DE NEWTON GLOBALE
+// ------------------------------------------------------------
+cout << "=============================================" << endl;
+cout << "  Newton global - demarrage" << endl;
+cout << "=============================================" << endl;
+
+for(int k = 0; k < iterMax; k++)
+{
+    // Contrainte normale courante sur label 1 (sigma_n = sigma_22, n = -e_y)
+    Ph sN;
+    sN = lambda*Div(u1,u2) + 2.*mu*dy(u2);
+
+    problem TangentNewton([du1,du2],[v1,v2], solver=UMFPACK)
+        =
+        // =====================================================
+        //  JACOBIEN  D R(u^k)[du, v]
+        // =====================================================
+        int2d(ThS)( Abilin(du1,du2,v1,v2) )
+
+        // Rigidite LJ : kappa^k * du_n * v_n sur Gamma_N = label 3
+        + int1d(ThS,3)( kapLJ(u2) * du2 * v2 )
+
+        // Penalisation Signorini : sur Gamma_C = label 1
+        + int1d(ThS,1)( penC * contactActive(u2) * du2 * v2 )
+
+        // Rigidite Coulomb tangentielle : K_t^k * du_t * v_t sur label 1
+        + int1d(ThS,1)( Kt(sN,u1) * du1 * v1 )
+
+        // =====================================================
+        //  -R(u^k)[v]
+        // =====================================================
+        + int2d(ThS)( Abilin(u1,u2,v1,v2) )
+
+        - int2d(ThS)( f1*v1 + f2*v2 )
+
+        // Traction fluide sur label 3 (face fluide + nanoparticules)
+        - int1d(ThS,3)( -Pfluide*(N.x*v1 + N.y*v2) )
+
+        // Force LJ sur label 3
+        - int1d(ThS,3)( FLJmac(u2)*(N.x*v1 + N.y*v2) )
+
+        // Contrainte normale sur label 2 (cote droit)
+        - int1d(ThS,2)( sigNt*(N.x*v1 + N.y*v2) )
+
+        // Contrainte tangentielle sur label 4 (cote gauche)
+        - int1d(ThS,4)( sigTf*(-N.y*v1 + N.x*v2) )
+
+        // Signorini : penalisation sur label 1
+        + int1d(ThS,1)( penC * max(-u2 - gGap, 0.) * (-v2) )
+
+        // Coulomb regularise sur label 1
+        + int1d(ThS,1)( muF*abs(sN) * u1/uTnorm(u1) * v1 )
+
+        // Encastrement sur label 1
+        + on(1, du1=0., du2=0.)
+    ;
+
+    TangentNewton;
+
+    u1[] += du1[];
+    u2[] += du2[];
+
+    real normDu = sqrt(int2d(ThS)(du1^2 + du2^2));
+    real normU  = sqrt(int2d(ThS)(u1^2  + u2^2 ));
+    real relErr = normDu / (normU + 1e-30);
+
+    cout << "  iter " << k+1
+         << "  ||du||/||u|| = " << relErr
+         << "  ||du|| = "       << normDu << endl;
+
+    if(relErr < tol){
+        cout << "  --> Convergence atteinte a l'iteration " << k+1 << endl;
+        break;
+    }
+    if(k == iterMax-1)
+        cout << "  ATTENTION : Newton non converge en "
+             << iterMax << " iterations." << endl;
+}
+
+cout << "=============================================" << endl;
+
+// ------------------------------------------------------------
+// 11. POST-TRAITEMENT
+// ------------------------------------------------------------
+Ph sigma11, sigma22, sigma12, vonMises, sigmaN;
+
+sigma11  = lambda*(dx(u1)+dy(u2)) + 2.*mu*dx(u1);
+sigma22  = lambda*(dx(u1)+dy(u2)) + 2.*mu*dy(u2);
+sigma12  = mu*(dy(u1)+dx(u2));
+vonMises = sqrt(sigma11^2 - sigma11*sigma22 + sigma22^2 + 3.*sigma12^2);
+sigmaN   = sigma22;
+
+real normUf = sqrt(int2d(ThS)(u1^2 + u2^2));
+cout << "||u||_L2   = " << normUf         << endl;
+cout << "u1_max     = " << u1[].max       << endl;
+cout << "u2_min     = " << u2[].min       << endl;
+cout << "VM_max     = " << vonMises[].max << " Pa" << endl;
+cout << "sigmaN_min = " << sigmaN[].min   << " Pa" << endl;
+
+plot([u1,u2], wait=true, value=true, fill=true,
+     cmm="Deplacement [m] - Newton global");
+plot(vonMises, wait=true, value=true, fill=true,
+     cmm="Von Mises [Pa] - Newton global");
+
+mesh Thdef = movemesh(ThS, [x+u1, y+u2]);
+plot(Thdef, wait=true, cmm="Maillage deforme");
+
+// ------------------------------------------------------------
+// 12. EXPORT VTK
+// ------------------------------------------------------------
+load "iovtk"
+savevtk("elasticite_nano_newton.vtk", ThS,
+        [u1,u2,0], vonMises, sigma11, sigma22, sigma12, sigmaN,
+        dataname="Deplacement vonMises Sxx Syy Sxy SigmaN");
+
+cout << "Fichier VTK sauvegarde : elasticite_nano_newton.vtk" << endl;
