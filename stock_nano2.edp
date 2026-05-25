@@ -1,0 +1,276 @@
+verbosity=0;
+
+// Nom du calcul
+string Name="Nanoparticule2";
+
+///////////////////////////////// FLUIDE /////////////////////////////////////////
+real Vc=1;        // m/sec
+real Lc=1e-09;    // m
+real etac=0.001;  // Pa.s   viscosité dynamique de l'eau
+real rhoc=1000;   // Kg/m^3 eau
+real Pc=10^6;     // Pa     1 MPa pour eau
+real Re=rhoc*Lc*Vc/etac;
+cout<<"Re="<<Re<<endl;
+real eta=1.*etac*Vc/(Lc*Pc); // viscosité adimensionnée
+cout<<"eta="<<eta<<endl;
+
+// =====================================================================
+// CONSTRUCTION DU DOMAINE
+// =====================================================================
+real e=5., a=2*e, dl=a, d=2*e;
+real xA=0., yA=0., xD=0, yD=5*e, eTiO2=1.5*e;
+real xL=0., yL=yD+eTiO2, xN=0, yN=6*e+yL;
+real xK=dl,    yK=yL;
+real xJ=xK+2*a, yJ=yL;
+real xI=xJ+2*dl,yI=yK;
+real xH=xI+2*a, yH=yK;
+real xG=xH+2*dl,yG=yK;
+real xF=xG+2*a, yF=yL;
+real xE=xF+dl,  yE=yL;
+real xM=xE,     yM=yN;
+real xC=xE,     yC=yD;
+real xB=xE,     yB=0.;
+
+// ---------------- Bords du DOMAINE FLUIDE ---------------------------
+// >>> CORRIGÉ : labels distincts (5, 6, 7) pour les 3 nanoparticules
+border SEM(t=0,1){ x=xE+t*(xM-xE); y=yE+t*(yM-yE); label=2; } // sortie (droite)
+border SMN(t=0,1){ x=xM+t*(xN-xM); y=yM+t*(yN-yM); label=3; } // haut
+border SNL(t=0,1){ x=xN+t*(xL-xN); y=yN+t*(yL-yN); label=4; } // entrée (gauche)
+border SLK(t=0,1){ x=xL+t*(xK-xL); y=yL+t*(yK-yL); label=1; } // paroi inf.
+border SKJ(t=pi,0.){ x=xK+a+a*cos(t); y=yL+d*sin(t); label=5; } // NANO 1
+border SJI(t=0,1){ x=xJ+t*(xI-xJ); y=yJ+t*(yI-yJ); label=1; } // paroi inf.
+border SIH(t=pi,0.){ x=xI+a+a*cos(t); y=yL+d*sin(t); label=6; } // NANO 2
+border SHG(t=0,1){ x=xH+t*(xG-xH); y=yH+t*(yG-yH); label=1; } // paroi inf.
+border SGF(t=pi,0.){ x=xG+a+a*cos(t); y=yE+d*sin(t); label=7; } // NANO 3
+border SFE(t=0,1){ x=xF+t*(xE-xF); y=yF+t*(yE-yF); label=1; } // paroi inf.
+
+// =====================================================================
+// MAILLAGE FLUIDE
+// =====================================================================
+int me=5, mv=6*me, mh=me*xM/e, mdl=3*me*dl/e, Melip=3*8*me, mv1=5*me, mv2=1.5*me;
+
+real H=0.001/Lc;                    // distance entre deux plaques
+real LFiltre=0.08/Lc;                // longueur des plaques
+real PDif=0.017*10^6/Pc;             // différence de pression entrée/sortie
+real C=-PDif/LFiltre;                // chute linéique de pression
+real PEntry=0.5*PDif;                // surpression à l'entrée
+real DeltaP=-C*xE;                   // chute de pression dans la cellule
+
+// Profil de vitesse de Poiseuille entre deux plaques
+func real VV(real yy) { return C*(yy-H)*yy/(2*eta); }
+real V=VV(yM-yL);                    // vitesse au sommet de la cellule
+cout<<"V="<<V<<endl;
+
+real eps=1e-13;
+
+plot(SFE(mdl)+SGF(Melip)+SHG(2*mdl)+SIH(Melip)+SJI(2*mdl)
+    +SKJ(Melip)+SLK(mdl)+SNL(mv)+SMN(mh)+SEM(mv));
+
+mesh ThF = buildmesh(
+      SFE(mdl)+SGF(Melip)+SHG(2*mdl)+SIH(Melip)+SJI(2*mdl)
+    + SKJ(Melip)+SLK(mdl)+SNL(mv)+SMN(mh)+SEM(mv) );
+plot(ThF, wait=true);
+
+// Métrique pour le raffinement
+func real Dist(real xx, real yy) {
+    if(xx<=xK) return yy-yL;
+    if ((xx>xK)&&(xx<xJ))  return yy-(yL+e*sqrt(1-((xx-xK-a)/a)^2));
+    if((xx>=xJ)&&(xx<=xI)) return yy-yL;
+    if((xx>xI)&&(xx<xH))   return yy-(yL+e*sqrt(1-((xx-xI-a)/a)^2));
+    if((xx>=xH)&&(xx<=xG)) return yy-yL;
+    if((xx>xG)&&(xx<xF))   return yy-(yL+e*sqrt(1-((xx-xG-a)/a)^2));
+    return yy-yL;
+}
+
+fespace VhF(ThF,P2);
+VhF fhF=Dist(x,y)/(5*e), Smesh;
+real hminF=0.5*dl/mdl, hmaxF=20*hminF;
+Smesh = hmaxF*fhF + hminF*(1-fhF);
+cout<<hminF<<" "<<hmaxF<<" "<<Smesh[].min<<" "<<Smesh[].max<<endl;
+plot(ThF, Smesh, fill=true, wait=true);
+
+mesh Th = adaptmesh(ThF, Smesh, hmin=hminF, hmax=hmaxF,
+                    IsMetric=1, err=0.01, nbvx=100000);
+plot(Th, wait=true);
+
+// =====================================================================
+// PARAMÈTRES PHYSIQUES
+// =====================================================================
+real nu = eta;        // viscosité cinématique adimensionnée
+func fx = 0.0;
+func fy = 0.0;
+
+// =====================================================================
+// ESPACES ÉLÉMENTS FINIS — Taylor-Hood P2-P1 (inf-sup OK)
+// =====================================================================
+fespace Vh(Th, P2);
+fespace Qh(Th, P1);
+
+Vh ux, uy;
+Vh vx, vy;
+Qh p;
+Qh q;
+
+// =====================================================================
+// FORMULATION VARIATIONNELLE DE STOKES
+// >>> CORRIGÉ : adhérence imposée sur les 3 nanoparticules (labels 5, 6, 7)
+// =====================================================================
+problem Stokes([ux, uy, p], [vx, vy, q], solver=UMFPACK) =
+    int2d(Th)(
+        nu*( dx(ux)*dx(vx) + dy(ux)*dy(vx)
+           + dx(uy)*dx(vy) + dy(uy)*dy(vy) )
+      - p*(dx(vx) + dy(vy))
+      - q*(dx(ux) + dy(uy))
+      - 1.e-10*p*q                     // stabilisation pression
+    )
+  - int2d(Th)( fx*vx + fy*vy )
+  -int1d(Th,4)(-PEntry*(vx*N.x + vy*N.y))
+  -int1d(Th,2)((-PEntry + DeltaP)*(vx*N.x + vy*N.y))
+  // Conditions aux limites
+  + on(1, ux=0., uy=0.)                // parois plates inférieures
+  + on(5, ux=0., uy=0.)                // nanoparticule 1
+  + on(6, ux=0., uy=0.)                // nanoparticule 2 (centrale)
+  + on(7, ux=0., uy=0.)                // nanoparticule 3
+  + on(4, uy=0.)          // entrée (gauche)
+  + on(3, ux=V, uy=0.)                 // haut
+  + on(2, uy=0.);         // sortie (droite)
+  // label 2 (sortie) : si on veut sigma.n=0, ne rien imposer ici
+
+Stokes;
+
+// =====================================================================
+// CALCUL DES EFFORTS SUR LES NANOPARTICULES
+// sigma = -p I + 2 nu eps(u),     F = ∫_Γ sigma . n ds
+// >>> CORRIGÉ : on intègre sur les labels 5, 6, 7 (les nanoparticules)
+// =====================================================================
+cout.precision(12);
+
+macro Tx() ( -p*N.x + 2*nu*( dx(ux)*N.x + 0.5*(dy(ux)+dx(uy))*N.y ) ) //
+macro Ty() ( -p*N.y + 2*nu*( 0.5*(dy(ux)+dx(uy))*N.x + dy(uy)*N.y ) ) //
+
+// Forces totales sur l'ensemble des 3 nanoparticules
+real FDtot = int1d(Th, 5, 6, 7)( Tx );
+real FLtot = int1d(Th, 5, 6, 7)( Ty );
+
+// Forces sur chaque nanoparticule séparément
+real FD1 = int1d(Th, 5)( Tx ),  FL1 = int1d(Th, 5)( Ty );
+real FD2 = int1d(Th, 6)( Tx ),  FL2 = int1d(Th, 6)( Ty );
+real FD3 = int1d(Th, 7)( Tx ),  FL3 = int1d(Th, 7)( Ty );
+
+cout << "=============================================" << endl;
+cout << " Forces hydrodynamiques (adimensionnees)      " << endl;
+cout << "---------------------------------------------" << endl;
+cout << " Nanoparticule 1 : FD = " << FD1 << "  FL = " << FL1 << endl;
+cout << " Nanoparticule 2 : FD = " << FD2 << "  FL = " << FL2 << endl;
+cout << " Nanoparticule 3 : FD = " << FD3 << "  FL = " << FL3 << endl;
+cout << "---------------------------------------------" << endl;
+cout << " Total           : FD = " << FDtot << "  FL = " << FLtot << endl;
+cout << "=============================================" << endl;
+
+// Vérification de l'incompressibilité
+real divU = sqrt( int2d(Th)( (dx(ux)+dy(uy))^2 ) );
+cout << "||div(u)||_L2 = " << divU << endl;
+
+// =====================================================================
+// POST-TRAITEMENT GRAPHIQUE
+// =====================================================================
+plot(p, fill=true, value=true, wait=1, cmm="Pression p");
+plot([ux,uy], fill=true, value=true, wait=1, cmm="Champ de vitesse [ux,uy]");
+plot(p, [ux,uy], value=true, wait=1, cmm="Stokes - Nanoparticules");
+
+// Sauvegarde brute (texte)
+{
+    ofstream fout("stokes_nano.dat");
+    fout << "x y u v p" << endl;
+    for(int i=0; i<Th.nv; i++){
+        fout << Th(i).x << " " << Th(i).y << " "
+             << ux(Th(i).x, Th(i).y) << " "
+             << uy(Th(i).x, Th(i).y) << " "
+             << p(Th(i).x, Th(i).y) << endl;
+    }
+}
+
+// =====================================================================
+// CONTRAINTES DANS UN FLUIDE NEWTONIEN (Stokes)
+// sigma = -p I + 2 mu eps(u)
+// =====================================================================
+real mu = nu;
+fespace Wh(Th,P1dc);
+
+Wh sxx = -p + 2*mu*dx(ux);
+Wh syy = -p + 2*mu*dy(uy);
+Wh sxy =       mu*(dy(ux) + dx(uy));
+
+// Invariant de "von Mises" — ici simple indicateur d'amplitude
+Wh vonMises = sqrt( sxx^2 + syy^2 - sxx*syy + 3*sxy^2 );
+cout << "Contrainte max (von Mises approx) = " << vonMises[].max << endl;
+
+// Pression moyenne (= -trace/2 en 2D, ici on stocke (sxx+syy)/2)
+Wh pres = (sxx+syy)/2.;
+
+// Norme du déviateur — intensité de cisaillement
+Wh deviateur = sqrt( 1.5*((sxx-pres)^2 + (syy-pres)^2 + 2*sxy^2) );
+cout << "DevMax = " << deviateur[].max << endl;
+
+plot(Th, deviateur, fill=true, value=true, ps="Dev.eps",  wait=1);
+plot(Th, pres,      fill=true, value=true, ps="Pres.eps", wait=1);
+
+// =====================================================================
+// EXPORT VTK POUR PARAVIEW
+// =====================================================================
+fespace Rh(Th,P1dc);
+Rh Xdes=x, Ydes=y, Zdes=0, devdes;
+int id;
+
+// --- Maillage ---
+{
+    ofstream par("Maillage."+Name+".vtk");
+    par <<"# vtk DataFile Version 1.0"<<endl;
+    par <<"2D Unstructured Grid of Linear Triangles"<<endl;
+    par <<"ASCII"<<endl<<" "<<endl;
+    par <<"DATASET UNSTRUCTURED_GRID"<<endl;
+    par <<"POINTS "<<Rh.ndof<<" float"<<endl;
+    for (id=0; id<Rh.ndof; id++)
+        par<< Xdes[][id] <<" "<< Ydes[][id] <<" "<< Zdes[][id] <<endl;
+    par <<"CELLS "<<Rh.nt<<" "<<(Rh.ndofK+1)*Rh.nt<<endl;
+    for (id=0; id<Rh.nt; id++)
+        par<<"3 "<<Rh(id,0)<<" "<<Rh(id,1)<<" "<<Rh(id,2)<<endl;
+    par <<" "<<endl<<"CELL_TYPES "<<Rh.nt<<endl;
+    for (id=0; id<Rh.nt; id++) par<<"5"<<endl;
+}
+
+// --- Résultats (vitesse, vonMises, pression moyenne) ---
+{
+    ofstream paru("Results"+Name+".vtk");
+    Rh velx = ux, vely = uy;
+    Rh speed = sqrt(ux*ux + uy*uy);
+
+    paru <<"# vtk DataFile Version 1.0"<<endl;
+    paru <<"2D Unstructured Grid of Linear Triangles"<<endl;
+    paru <<"ASCII"<<endl<<" "<<endl;
+    paru <<"DATASET UNSTRUCTURED_GRID"<<endl;
+    paru <<"POINTS "<<Rh.ndof<<" float"<<endl;
+    for (id=0; id<Rh.ndof; id++)
+        paru<< Xdes[][id] <<" "<< Ydes[][id] <<" "<< Zdes[][id] <<endl;
+    paru <<"CELLS "<<Rh.nt<<" "<<(Rh.ndofK+1)*Rh.nt<<endl;
+    for (id=0; id<Rh.nt; id++)
+        paru<<"3 "<<Rh(id,0)<<" "<<Rh(id,1)<<" "<<Rh(id,2)<<endl;
+    paru <<" "<<endl<<"CELL_TYPES "<<Rh.nt<<endl;
+    for (id=0; id<Rh.nt; id++) paru<<"5"<<endl;
+
+    paru <<" "<<endl<<"POINT_DATA "<<Rh.ndof<<endl;
+    paru <<"VECTORS velocity float"<<endl;
+    for (id=0; id<Rh.ndof; id++)
+        paru<< velx[][id] <<" "<< vely[][id] <<" 0"<<endl;
+
+    paru <<"SCALARS speed float"<<endl<<"LOOKUP_TABLE default"<<endl;
+    for (id=0; id<Rh.ndof; id++) paru<< speed[][id] <<endl;
+
+    paru <<"SCALARS ContrainteVonMises float"<<endl<<"LOOKUP_TABLE default"<<endl;
+    devdes = deviateur;
+    for (id=0; id<Rh.ndof; id++) paru<< devdes[][id] <<endl;
+
+    paru <<"SCALARS ContrainteMoyenne float"<<endl<<"LOOKUP_TABLE default"<<endl;
+    devdes = pres;
+    for (id=0; id<Rh.ndof; id++) paru<< devdes[][id] <<endl;
+}
