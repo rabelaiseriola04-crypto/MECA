@@ -1,0 +1,248 @@
+// ============================================================
+//  FreeFEM++  --  NEWTON MONOLITHIQUE 2 CORPS (particule + substrat)
+//  Stage 1 : Stokes (charge fluide sur label 3)
+//  Stage 2 : un seul systeme tangent [[KPP,KPS],[KSP,KSS]] par iteration
+//            couplage interface par matrice d'interpolation R (WS->WP)
+// ============================================================
+verbosity = 0;
+load "iovtk"
+string Name = "Nanoparticule2";
+real coupling = 1.0;
+
+// ---------------- GEOMETRIE ----------------
+real e=5., a=2.*e, dl=a, d=2.*e;
+real xD=0., yD=5.*e, eTiO2=1.5*e;
+real xL=0., yL=yD+eTiO2, xN=0., yN=6.*e+yL;
+real xK=dl, xJ=xK+2.*a, xI=xJ+2.*dl, xH=xI+2.*a, xG=xH+2.*dl, xF=xG+2.*a, xE=xF+dl;
+real yK=yL,yJ=yL,yI=yL,yH=yL,yG=yL,yF=yL,yE=yL, xM=xE, yM=yN;
+
+// ================= STAGE 1 : STOKES =================
+real Vc=1., Lc=1e-09, etac=0.001, rhoc=1000., Pc=1e6;
+real eta=1.*etac*Vc/(Lc*Pc), nu=eta;
+real H=0.001/Lc, LFiltre=0.08/Lc, PDif=0.017*1e6/Pc;
+real C=-PDif/LFiltre, PEntry=0.5*PDif, DeltaP=-C*xE;
+func real VV(real yy){ return C*(yy-H)*yy/(2.*eta); }
+real V=VV(yM-yL);
+func fx=0.0; 
+func fy=0.0;
+
+border SEM(t=0,1){ x=xE+t*(xM-xE); y=yE+t*(yM-yE); label=2; }
+border SMN(t=0,1){ x=xM+t*(xN-xM); y=yM+t*(yN-yM); label=3; }
+border SNL(t=0,1){ x=xN+t*(xL-xN); y=yN+t*(yL-yN); label=4; }
+border SLK(t=0,1){ x=xL+t*(xK-xL); y=yL; label=1; }
+border SKJ(t=pi,0.){ x=xK+a+a*cos(t); y=yL+d*sin(t); label=5; }
+border SJI(t=0,1){ x=xJ+t*(xI-xJ); y=yL; label=1; }
+border SIH(t=pi,0.){ x=xI+a+a*cos(t); y=yL+d*sin(t); label=6; }
+border SHG(t=0,1){ x=xH+t*(xG-xH); y=yL; label=1; }
+border SGF(t=pi,0.){ x=xG+a+a*cos(t); y=yL+d*sin(t); label=7; }
+border SFE(t=0,1){ x=xF+t*(xE-xF); y=yL; label=1; }
+
+int me=5, mv=6*me, mh=me*xM/e, mdl=3*me*dl/e, Melip=3*8*me;
+mesh ThF = buildmesh( SFE(mdl)+SGF(Melip)+SHG(2*mdl)+SIH(Melip)+SJI(2*mdl)
+                    + SKJ(Melip)+SLK(mdl)+SNL(mv)+SMN(mh)+SEM(mv) );
+func real Dist(real xx, real yy){
+    if(xx<=xK) return yy-yL;
+    if((xx>xK)&&(xx<xJ))  return yy-(yL+e*sqrt(1.-((xx-xK-a)/a)^2));
+    if((xx>=xJ)&&(xx<=xI)) return yy-yL;
+    if((xx>xI)&&(xx<xH))   return yy-(yL+e*sqrt(1.-((xx-xI-a)/a)^2));
+    if((xx>=xH)&&(xx<=xG)) return yy-yL;
+    if((xx>xG)&&(xx<xF))   return yy-(yL+e*sqrt(1.-((xx-xG-a)/a)^2));
+    return yy-yL; }
+fespace VhF(ThF,P2);
+VhF fhF=Dist(x,y)/(5.*e), Smesh;
+real hminF=0.5*dl/mdl, hmaxF=20.*hminF;
+Smesh = hmaxF*fhF + hminF*(1.-fhF);
+mesh Th = adaptmesh(ThF, Smesh, hmin=hminF, hmax=hmaxF, IsMetric=1, err=0.01, nbvx=100000);
+
+fespace Vh(Th,P2);  fespace Qh(Th,P1);
+Vh ux,uy,vx,vy;  Qh p,q;
+problem Stokes([ux,uy,p],[vx,vy,q],solver=UMFPACK) =
+    int2d(Th)( nu*(dx(ux)*dx(vx)+dy(ux)*dy(vx)+dx(uy)*dx(vy)+dy(uy)*dy(vy))
+             - p*(dx(vx)+dy(vy)) - q*(dx(ux)+dy(uy)) - 1.e-10*p*q )
+  - int2d(Th)( fx*vx + fy*vy )
+  - int1d(Th,4)( -PEntry*(vx*N.x+vy*N.y) )
+  - int1d(Th,2)( (-PEntry+DeltaP)*(vx*N.x+vy*N.y) )
+  + on(1,ux=0.,uy=0.)+on(5,ux=0.,uy=0.)+on(6,ux=0.,uy=0.)
+  + on(7,ux=0.,uy=0.)+on(4,uy=0.)+on(3,ux=V,uy=0.)+on(2,uy=0.);
+Stokes;
+real muFl = nu;
+fespace WhF1(Th,P1);
+WhF1 SxxF=-p+2.*muFl*dx(ux), SyyF=-p+2.*muFl*dy(uy), SxyF=muFl*(dy(ux)+dx(uy));
+
+// ================= STAGE 2 : MONOLITHIQUE =================
+real lamP=115542.62, muP=98425.19;
+real lamS=10.*lamP,  muS=10.*muP;
+real epsLJ=1e-3, d0=0.2;
+real muFric=0.3, epsT=1e-3, ktTang0=1e-2;
+int  iterMax=40;
+real tol=1e-8, alpha=1.0;       // alpha = amortissement de Newton (<1 si instable)
+func f1=0.;
+func f2=0.;
+
+// --- maillage particule
+border N2base(t=0,1){  x=xI+t*(xH-xI);  y=yL;          label=1; }
+border N2top (t=0,pi){ x=xI+a+a*cos(t); y=yL+d*sin(t); label=3; }
+int meS=8, mdlS=3*meS*dl/e, MelipS=24*meS;
+mesh Th0 = buildmesh( N2base(2*mdlS) + N2top(MelipS) );
+plot(Th0, wait=true, cmm="Maillage initial");
+
+func real DistBase(real xx, real yy){ return abs(yy-yL); }
+fespace Vh0(Th0,P1);
+Vh0 fhb=DistBase(x,y)/d, metric;
+real hmin=0.1*dl/mdlS, hmax=20.*hmin;
+metric = hmax*fhb + hmin*(1.-fhb);
+mesh ThP = adaptmesh(Th0, metric, hmin=hmin, hmax=hmax, IsMetric=1, err=0.01, nbvx=100000);
+plot(ThP, wait=true, cmm="Maillage adapte");
+
+// --- maillage substrat
+real xsub0=xI-dl, xsub1=xH+dl, ysubB=yL-eTiO2;
+border SubBot (t=0,1){ x=xsub0+t*(xsub1-xsub0); y=ysubB;             label=14; }
+border SubRight(t=0,1){ x=xsub1;                 y=ysubB+t*(yL-ysubB);label=13; }
+border SubTopR(t=0,1){ x=xsub1+t*(xH-xsub1);     y=yL;               label=12; }
+border SubTopC(t=0,1){ x=xH+t*(xI-xH);           y=yL;               label=11; }
+border SubTopL(t=0,1){ x=xI+t*(xsub0-xI);        y=yL;               label=12; }
+border SubLeft(t=0,1){ x=xsub0;                  y=yL+t*(ysubB-yL);  label=13; }
+int nC=2*mdlS, nF=mdlS, nV=max(MelipS/2,6);
+mesh ThSub = buildmesh( SubBot(nC+2*nF)+SubRight(nV)+SubTopR(nF)
+                      + SubTopC(nC)+SubTopL(nF)+SubLeft(nV) );
+plot(ThP, ThSub, wait=true, cmm="Maillages particule + substrat");
+
+// --- espaces VECTORIELS
+fespace WP(ThP,[P2,P2]);    fespace PhP(ThP,P1);
+fespace WS(ThSub,[P2,P2]);  fespace PhS(ThSub,P1);
+WP [u1,u2]=[0,0];  WP [uSb1,uSb2]=[0,0];
+WS [uS1,uS2]=[0,0];
+int ndP = WP.ndof, ndS = WS.ndof;
+
+// --- matrice d'interpolation interface (WS -> WP), construite UNE fois
+matrix R = interpolate(WP, WS);
+
+// --- macros
+macro Div(w1,w2) ( dx(w1)+dy(w2) ) //
+macro Eps(a1,a2,b1,b2)
+( dx(a1)*dx(b1)+dy(a2)*dy(b2)+0.5*(dy(a1)+dx(a2))*(dy(b1)+dx(b2)) ) //
+macro Abil(a1,a2,b1,b2,lam,muu)
+( lam*Div(a1,a2)*Div(b1,b2) + 2.*muu*Eps(a1,a2,b1,b2) ) //
+macro un(w1,w2) ( w1*N.x + w2*N.y ) //
+macro dLJ(uu)   ( max(d0-uu,1e-12) ) //
+macro FLJ(uu)   ( 12.*epsLJ/d0*( pow(d0/dLJ(uu),13) - pow(d0/dLJ(uu),7) ) ) //
+macro KappaLJ(uu)
+( 12.*epsLJ/(d0*d0)*( 13.*pow(d0/dLJ(uu),14) - 7.*pow(d0/dLJ(uu),8) ) ) //
+
+// --- champs d'interface (recalcules chaque iteration)
+PhP sepP, FNp, KNp, gtP, pNp, tauP, KfP;
+
+cout << "=== Newton monolithique 2 corps ===" << endl;
+for(int k=0; k<iterMax; k++)
+{
+    // ---- substrat interpole sur la particule (interface) ----
+    uSb1[] = R * uS1[];
+
+    // ---- lois d'interface + tangentes ----
+    sepP = min(max(d0 + (u2 - uSb2), 0.3*d0), 5.*d0);
+    FNp  = 12.*epsLJ/d0*( (d0/sepP)^13 - (d0/sepP)^7 );
+    KNp  = 12.*epsLJ/(d0*d0)*( 13.*(d0/sepP)^14 - 7.*(d0/sepP)^8 );  // = -dFN/ds
+    gtP  = u1 - uSb1;
+    pNp  = max(FNp, 0.);
+    tauP = -muFric*pNp*tanh(gtP/epsT) - ktTang0*gtP;
+    KfP  = muFric*pNp/epsT*(1.-tanh(gtP/epsT)^2) + ktTang0;
+
+    // ---- blocs tangents diagonaux ----
+    varf vaP([du1,du2],[v1,v2]) =
+        int2d(ThP)( Abil(du1,du2,v1,v2,lamP,muP) )
+      + int1d(ThP,3)( KappaLJ(un(u1,u2))*un(du1,du2)*un(v1,v2) );
+    matrix KPbulk = vaP(WP,WP);
+
+    varf vaS([du1,du2],[v1,v2]) =
+        int2d(ThSub)( Abil(du1,du2,v1,v2,lamS,muS) )
+      + on(14, du1=0, du2=0);
+    matrix KSbulk = vaS(WS,WS);
+
+    // ---- raideur d'interface (+MP) et son oppose (-MP) ----
+    varf vMP([du1,du2],[v1,v2])  = int1d(ThP,1)(  KfP*du1*v1 + KNp*du2*v2 );
+    varf vMPn([du1,du2],[v1,v2]) = int1d(ThP,1)( -KfP*du1*v1 - KNp*du2*v2 );
+    matrix MP  = vMP(WP,WP);
+    matrix MPn = vMPn(WP,WP);
+
+    // ---- blocs croises : KPS=-MP*R, KSP=-R'*MP, KSS interface=R'*MP*R ----
+    matrix MPR  = MP * R;          // ndP x ndS
+    matrix KPP  = KPbulk + MP;
+    matrix KPS  = MPn * R;         // = -MP*R
+    matrix KSP  = R' * MPn;        // = -R'*MP
+    matrix RtMPR= R' * MPR;        // = R'*MP*R
+    matrix KSS  = KSbulk + RtMPR;
+
+    matrix KK = [[KPP, KPS],[KSP, KSS]];
+    set(KK, solver=UMFPACK);
+
+    // ---- residus ----
+    varf vLP([du1,du2],[v1,v2]) =
+        int2d(ThP)( Abil(u1,u2,v1,v2,lamP,muP) )
+      - int2d(ThP)( f1*v1 + f2*v2 )
+      - int1d(ThP,3)( coupling*( (SxxF*N.x+SxyF*N.y)*v1
+                               + (SxyF*N.x+SyyF*N.y)*v2 ) )
+      - int1d(ThP,3)( FLJ(un(u1,u2))*un(v1,v2) )
+      - int1d(ThP,1)( FNp*v2 + tauP*v1 );
+    real[int] rP = vLP(0,WP);
+
+    varf vLS([du1,du2],[v1,v2]) =
+        int2d(ThSub)( Abil(uS1,uS2,v1,v2,lamS,muS) )
+      + on(14, du1=0, du2=0);
+    real[int] rSb = vLS(0,WS);
+
+    varf vFP([du1,du2],[v1,v2]) = int1d(ThP,1)( FNp*v2 + tauP*v1 );
+    real[int] fPint = vFP(0,WP);
+    real[int] rStr  = R' * fPint;      // transfert interface vers substrat
+    real[int] rS = rSb;  rS += rStr;
+
+    // ---- second membre global = -[rP ; rS] ----
+    real[int] RHS(ndP+ndS);
+    RHS(0:ndP-1)        = rP;
+    RHS(ndP:ndP+ndS-1)  = rS;
+    RHS = -RHS;
+
+    real[int] sol = KK^-1 * RHS;
+
+    // ---- mise a jour ----
+    real[int] dP = sol(0:ndP-1);
+    real[int] dS = sol(ndP:ndP+ndS-1);
+    u1[]  += alpha*dP;
+    uS1[] += alpha*dS;
+
+    real ndu = sol.l2;
+    real nuu = u1[].l2 + uS1[].l2 + 1e-30;
+    real relErr = alpha*ndu/nuu;
+    cout << "iter=" << k+1 << "  relErr=" << relErr << "  ||du||=" << ndu << endl;
+    if(relErr < tol){ cout << "Convergence atteinte." << endl; break; }
+    if(k==iterMax-1) cout << "Non converge (baisser alpha ~0.5)." << endl;
+}
+
+// ================= BILAN + POST =================
+uSb1[] = R * uS1[];
+real FfluX = int1d(ThP,3)( coupling*(SxxF*N.x+SxyF*N.y) );
+real FfluY = int1d(ThP,3)( coupling*(SxyF*N.x+SyyF*N.y) );
+real Fadh1Y= int1d(ThP,1)( FNp );
+real FfrotX= int1d(ThP,1)( tauP );
+cout << "=== Bilan particule ===" << endl;
+cout << " F_fluide  Fx="<<FfluX<<"  Fy="<<FfluY<<endl;
+cout << " F_adh(1)  Fy="<<Fadh1Y<<"   F_frot Fx="<<FfrotX<<endl;
+
+PhP s11P=lamP*(dx(u1)+dy(u2))+2.*muP*dx(u1);
+PhP s22P=lamP*(dx(u1)+dy(u2))+2.*muP*dy(u2);
+PhP s12P=muP*(dy(u1)+dx(u2));
+PhP vmP =sqrt( s11P^2 - s11P*s22P + s22P^2 + 3.*s12P^2 );
+PhS s11S=lamS*(dx(uS1)+dy(uS2))+2.*muS*dx(uS1);
+PhS s22S=lamS*(dx(uS1)+dy(uS2))+2.*muS*dy(uS2);
+PhS s12S=muS*(dy(uS1)+dx(uS2));
+PhS vmS =sqrt( s11S^2 - s11S*s22S + s22S^2 + 3.*s12S^2 );
+cout << "VM max particule = " << vmP[].max << "   substrat = " << vmS[].max << endl;
+
+plot([u1,u2], wait=true, fill=true, value=true, cmm="Deplacement particule");
+plot([uS1,uS2], wait=true, fill=true, value=true, cmm="Deplacement substrat");
+plot(vmP, wait=true, fill=true, value=true, cmm="Von Mises particule");
+
+savevtk("particule_"+Name+".vtk", ThP, [u1,u2,0], vmP, s11P,s22P,s12P,
+        dataname="Deplacement vonMises Sxx Syy Sxy");
+savevtk("substrat_"+Name+".vtk", ThSub, [uS1,uS2,0], vmS, s11S,s22S,s12S,
+        dataname="Deplacement vonMises Sxx Syy Sxy");
+cout << "Termine." << endl;
