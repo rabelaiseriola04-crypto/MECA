@@ -1,3 +1,5 @@
+xvfb-run FreeFem++ moncode.edp
+
 for f in *.eps; do convert "$f" "${f%.eps}.png" && rm "$f"; done
 
 
