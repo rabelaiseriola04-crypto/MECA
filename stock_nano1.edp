@@ -50,9 +50,9 @@ cout<<"V="<<V<<endl;
 
 real eps=0.0000000000001; // V imposed velocity
 
-plot(SHG(Melip+3*mdl)+SGF(Melip)+SFE(Melip+3*mdl)+SIH(mv)+SJI(mh)+SEJ(mv));
+//plot(SHG(Melip+3*mdl)+SGF(Melip)+SFE(Melip+3*mdl)+SIH(mv)+SJI(mh)+SEJ(mv));
 mesh ThF=buildmesh(SHG(Melip+3*mdl)+SGF(Melip)+SFE(Melip+3*mdl)+SIH(mv)+SJI(mh)+SEJ(mv));
-plot(ThF,wait=true);
+plot(ThF,ps="maill.eps");
 
 func real Dist(real xx, real yy) {
   if(xx<=xG) return yy-yH;
@@ -65,9 +65,9 @@ VhF fhF=Dist(x,y)/(5*e), Smesh;
 real hminF=0.5*dl/mdl, hmaxF=20*hminF;
 Smesh=hmaxF*fhF + hminF*(1-fhF);
 cout<<hminF<<" "<<hmaxF<<" "<<Smesh[].min<<" "<<Smesh[].max<<endl;
-plot(ThF,Smesh, fill=true, wait=true);
+//plot(ThF,Smesh, fill=true, wait=true);
 mesh Th=adaptmesh(ThF,Smesh, hmin=hminF,hmax=hmaxF, IsMetric=1, err=0.01, nbvx=100000);
-plot(Th,wait=true);
+plot(Th,wait=true,ps="maill2.eps" ,nbiso=100);
 // =====================
 // Parametres physiques
 // =====================
@@ -156,14 +156,12 @@ cout << "||div(u)||_L2 = " << divU << endl;
 // =====================
 // Post-traitement
 // =====================
-plot(p, fill=true, value=true, wait=1, 
-     cmm="Pression p");
+plot(p, ps="P.eps");
 
-plot([ux,uy], fill=true, value=true, wait=1, 
-     cmm="Champ de vitesse [ux,uy]");
+//plot([ux,uy],ps="V.eps",dim=2);
 
-plot(p, [ux,uy], value=true, wait=1, 
-     cmm="Stokes stationnaire - Nanoparticule");
+//plot(p, [ux,uy], value=true, wait=1, 
+    // cmm="Stokes stationnaire - Nanoparticule");
 
 // Sauvegarde pour Paraview
 {
@@ -244,8 +242,8 @@ Wh pres=(sxx+syy)/2.; //  contrainte moyenne
 // norme du déviateur (intensité de cisaillement)
 Wh deviateur=sqrt(1.5*((sxx-pres)^2+(syy-pres)^2+2*sxy^2));
 cout<<"DevMax="<<deviateur[].max<<endl;// a comparere avac le seuil de plasticité
-plot(Th,deviateur, fill=true,value=true, ps="Dev.eps", wait=1);/// plot FreeFem de la solution
-plot(Th,pres, fill=true,value=true, ps="Pres.eps", wait=1);/// plot FreeFem de la solution
+plot(Th,deviateur,ps="Dev.eps");/// plot FreeFem de la solution
+plot(Th,pres,ps="Pres.eps");/// plot FreeFem de la solution
 ////////////////////////////////////////////
 
 ///////////////////Visualisation vtk

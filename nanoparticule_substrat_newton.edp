@@ -5,7 +5,7 @@
 //            couplage interface par matrice d'interpolation R (WS->WP)
 // ============================================================
 verbosity = 0;
-load "iovtk"
+//load "iovtk";
 string Name = "Nanoparticule2";
 real coupling = 1.0;
 
@@ -84,7 +84,7 @@ border N2base(t=0,1){  x=xI+t*(xH-xI);  y=yL;          label=1; }
 border N2top (t=0,pi){ x=xI+a+a*cos(t); y=yL+d*sin(t); label=3; }
 int meS=8, mdlS=3*meS*dl/e, MelipS=24*meS;
 mesh Th0 = buildmesh( N2base(2*mdlS) + N2top(MelipS) );
-plot(Th0, wait=true, cmm="Maillage initial");
+plot(Th0, wait=true, cmm="Maillage initial" ,ps="maill.eps");
 
 func real DistBase(real xx, real yy){ return abs(yy-yL); }
 fespace Vh0(Th0,P1);
@@ -92,7 +92,7 @@ Vh0 fhb=DistBase(x,y)/d, metric;
 real hmin=0.1*dl/mdlS, hmax=20.*hmin;
 metric = hmax*fhb + hmin*(1.-fhb);
 mesh ThP = adaptmesh(Th0, metric, hmin=hmin, hmax=hmax, IsMetric=1, err=0.01, nbvx=100000);
-plot(ThP, wait=true, cmm="Maillage adapte");
+plot(ThP, wait=true, cmm="Maillage adapte",ps="maill2.eps");
 
 // --- maillage substrat
 real xsub0=xI-dl, xsub1=xH+dl, ysubB=yL-eTiO2;
@@ -105,7 +105,7 @@ border SubLeft(t=0,1){ x=xsub0;                  y=yL+t*(ysubB-yL);  label=13; }
 int nC=2*mdlS, nF=mdlS, nV=max(MelipS/2,6);
 mesh ThSub = buildmesh( SubBot(nC+2*nF)+SubRight(nV)+SubTopR(nF)
                       + SubTopC(nC)+SubTopL(nF)+SubLeft(nV) );
-plot(ThP, ThSub, wait=true, cmm="Maillages particule + substrat");
+plot(ThP, ThSub, wait=true, cmm="Maillages particule + substrat",ps="maill_substrat.eps");
 
 // --- espaces VECTORIELS
 fespace WP(ThP,[P2,P2]);    fespace PhP(ThP,P1);
@@ -237,12 +237,12 @@ PhS s12S=muS*(dy(uS1)+dx(uS2));
 PhS vmS =sqrt( s11S^2 - s11S*s22S + s22S^2 + 3.*s12S^2 );
 cout << "VM max particule = " << vmP[].max << "   substrat = " << vmS[].max << endl;
 
-plot([u1,u2], wait=true, fill=true, value=true, cmm="Deplacement particule");
-plot([uS1,uS2], wait=true, fill=true, value=true, cmm="Deplacement substrat");
-plot(vmP, wait=true, fill=true, value=true, cmm="Von Mises particule");
+plot([u1,u2], wait=true, fill=true, value=true, cmm="Deplacement particule",ps="Vparticule.eps");
+plot([uS1,uS2], wait=true, fill=true, value=true, cmm="Deplacement substrat",ps="Vsubstrat.eps");
+plot(vmP, wait=true, fill=true, value=true, cmm="Von Mises particule",ps="Vonmiss.eps");
 
-savevtk("particule_"+Name+".vtk", ThP, [u1,u2,0], vmP, s11P,s22P,s12P,
-        dataname="Deplacement vonMises Sxx Syy Sxy");
-savevtk("substrat_"+Name+".vtk", ThSub, [uS1,uS2,0], vmS, s11S,s22S,s12S,
-        dataname="Deplacement vonMises Sxx Syy Sxy");
+//savevtk("particule_"+Name+".vtk", ThP, [u1,u2,0], vmP, s11P,s22P,s12P,
+//        dataname="Deplacement vonMises Sxx Syy Sxy");
+//savevtk("substrat_"+Name+".vtk", ThSub, [uS1,uS2,0], vmS, s11S,s22S,s12S,
+//        dataname="Deplacement vonMises Sxx Syy Sxy");
 cout << "Termine." << endl;

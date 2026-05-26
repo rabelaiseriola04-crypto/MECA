@@ -1,0 +1,6 @@
+for f in *.eps; do convert "$f" "${f%.eps}.png" && rm "$f"; done
+
+
+for f in *.eps; do
+    convert -density 1200 "$f" -quality 100 "${f%.eps}.png" && rm "$f"
+done
