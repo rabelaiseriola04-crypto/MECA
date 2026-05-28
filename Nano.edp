@@ -1,0 +1,723 @@
+verbosity=0;
+
+// Nom du calcul
+string Name="Nanoparticule2";
+
+// =====================================================================
+// PARTIE I — ÉCOULEMENT FLUIDE (STOKES)
+// =====================================================================
+
+///////////////////////////////// FLUIDE /////////////////////////////////////////
+real Vc=1;        // m/sec
+real Lc=1e-09;    // m
+real etac=0.001;  // Pa.s   viscosité dynamique de l'eau
+real rhoc=1000;   // Kg/m^3 eau
+real Pc=10^6;     // Pa     1 MPa pour eau
+real Re=rhoc*Lc*Vc/etac;
+cout<<"Re="<<Re<<endl;
+real eta=1.*etac*Vc/(Lc*Pc); // viscosité adimensionnée
+cout<<"eta="<<eta<<endl;
+
+// =====================================================================
+// CONSTRUCTION DU DOMAINE
+// =====================================================================
+real e=5., a=2*e, dl=a, d=2*e;
+real xA=0., yA=0., xD=0, yD=5*e, eTiO2=1.5*e;
+real xL=0., yL=yD+eTiO2, xN=0, yN=6*e+yL;
+real xK=dl,    yK=yL;
+real xJ=xK+2*a, yJ=yL;
+real xI=xJ+2*dl,yI=yK;
+real xH=xI+2*a, yH=yK;
+real xG=xH+2*dl,yG=yK;
+real xF=xG+2*a, yF=yL;
+real xE=xF+dl,  yE=yL;
+real xM=xE,     yM=yN;
+real xC=xE,     yC=yD;
+real xB=xE,     yB=0.;
+
+// ---------------- Bords du DOMAINE FLUIDE ---------------------------
+border SEM(t=0,1){ x=xE+t*(xM-xE); y=yE+t*(yM-yE); label=2; } // sortie (droite)
+border SMN(t=0,1){ x=xM+t*(xN-xM); y=yM+t*(yN-yM); label=3; } // haut
+border SNL(t=0,1){ x=xN+t*(xL-xN); y=yN+t*(yL-yN); label=4; } // entrée (gauche)
+border SLK(t=0,1){ x=xL+t*(xK-xL); y=yL+t*(yK-yL); label=1; } // paroi inf.
+border SKJ(t=pi,0.){ x=xK+a+a*cos(t); y=yL+d*sin(t); label=5; } // NANO 1
+border SJI(t=0,1){ x=xJ+t*(xI-xJ); y=yJ+t*(yI-yJ); label=1; } // paroi inf.
+border SIH(t=pi,0.){ x=xI+a+a*cos(t); y=yL+d*sin(t); label=6; } // NANO 2
+border SHG(t=0,1){ x=xH+t*(xG-xH); y=yH+t*(yG-yH); label=1; } // paroi inf.
+border SGF(t=pi,0.){ x=xG+a+a*cos(t); y=yE+d*sin(t); label=7; } // NANO 3
+border SFE(t=0,1){ x=xF+t*(xE-xF); y=yF+t*(yE-yF); label=1; } // paroi inf.
+
+// =====================================================================
+// MAILLAGE FLUIDE
+// =====================================================================
+int me=5, mv=6*me, mh=me*xM/e, mdl=3*me*dl/e, Melip=3*8*me, mv1=5*me, mv2=1.5*me;
+
+real H=0.001/Lc;                    // distance entre deux plaques
+real LFiltre=0.08/Lc;               // longueur des plaques
+real PDif=0.017*10^6/Pc;            // différence de pression entrée/sortie
+real C=-PDif/LFiltre;               // chute linéique de pression
+real PEntry=0.5*PDif;               // surpression à l'entrée
+real DeltaP=-C*xE;                  // chute de pression dans la cellule
+
+// Profil de vitesse de Poiseuille entre deux plaques
+func real VV(real yy) { return C*(yy-H)*yy/(2*eta); }
+real V=VV(yM-yL);                   // vitesse au sommet de la cellule
+cout<<"V="<<V<<endl;
+
+real eps=1e-13;
+
+//plot(SFE(mdl)+SGF(Melip)+SHG(2*mdl)+SIH(Melip)+SJI(2*mdl)
+//    +SKJ(Melip)+SLK(mdl)+SNL(mv)+SMN(mh)+SEM(mv));
+
+mesh ThF = buildmesh(
+      SFE(mdl)+SGF(Melip)+SHG(2*mdl)+SIH(Melip)+SJI(2*mdl)
+    + SKJ(Melip)+SLK(mdl)+SNL(mv)+SMN(mh)+SEM(mv) );
+plot(ThF,  wait=false,ps="maillagefluid.eps", cmm="Maillage fluide initial");
+
+// Métrique pour le raffinement
+func real Dist(real xx, real yy) {
+    if(xx<=xK) return yy-yL;
+    if ((xx>xK)&&(xx<xJ))  return yy-(yL+e*sqrt(1-((xx-xK-a)/a)^2));
+    if((xx>=xJ)&&(xx<=xI)) return yy-yL;
+    if((xx>xI)&&(xx<xH))   return yy-(yL+e*sqrt(1-((xx-xI-a)/a)^2));
+    if((xx>=xH)&&(xx<=xG)) return yy-yL;
+    if((xx>xG)&&(xx<xF))   return yy-(yL+e*sqrt(1-((xx-xG-a)/a)^2));
+    return yy-yL;
+}
+
+fespace VhF(ThF,P2);
+VhF fhF=Dist(x,y)/(5*e), Smesh;
+real hminF=0.5*dl/mdl, hmaxF=20*hminF;
+Smesh = hmaxF*fhF + hminF*(1-fhF);
+cout<<hminF<<" "<<hmaxF<<" "<<Smesh[].min<<" "<<Smesh[].max<<endl;
+plot(ThF, Smesh,  wait=false, ps="FluidMeshMetric.eps");
+
+mesh Th = adaptmesh(ThF, Smesh, hmin=hminF, hmax=hmaxF,
+                    IsMetric=1, err=0.01, nbvx=100000);
+plot(Th,  wait=false, ps="FluidMeshRefined.eps");
+
+// =====================================================================
+// PARAMÈTRES PHYSIQUES FLUIDE
+// =====================================================================
+real nu = eta;
+func fx = 0.0;
+func fy = 0.0;
+
+// =====================================================================
+// ESPACES EF — Taylor-Hood P2-P1
+// =====================================================================
+fespace Vh(Th, P2);
+fespace Qh(Th, P1);
+
+Vh ux, uy;
+Vh vx, vy;
+Qh p;
+Qh q;
+
+// =====================================================================
+// FORMULATION VARIATIONNELLE DE STOKES
+// =====================================================================
+problem Stokes([ux, uy, p], [vx, vy, q], solver=UMFPACK) =
+    int2d(Th)(
+        nu*( dx(ux)*dx(vx) + dy(ux)*dy(vx)
+           + dx(uy)*dx(vy) + dy(uy)*dy(vy) )
+      - p*(dx(vx) + dy(vy))
+      - q*(dx(ux) + dy(uy))
+      - 1.e-10*p*q
+    )
+  - int2d(Th)( fx*vx + fy*vy )
+  - int1d(Th,4)(-PEntry*(vx*N.x + vy*N.y))
+  - int1d(Th,2)((-PEntry + DeltaP)*(vx*N.x + vy*N.y))
+  + on(1, ux=0., uy=0.)
+  + on(5, ux=0., uy=0.)
+  + on(6, ux=0., uy=0.)
+  + on(7, ux=0., uy=0.)
+  + on(4, uy=0.)
+  + on(3, ux=V, uy=0.)
+  + on(2, uy=0.);
+
+Stokes;
+
+// =====================================================================
+// CALCUL DES EFFORTS SUR LES NANOPARTICULES (FLUIDE → SOLIDE)
+// sigma_f = -p I + 2 eta D(u),   T = sigma_f . n
+// =====================================================================
+cout.precision(12);
+
+macro Tx() ( -p*N.x + 2*nu*( dx(ux)*N.x + 0.5*(dy(ux)+dx(uy))*N.y ) ) //
+macro Ty() ( -p*N.y + 2*nu*( 0.5*(dy(ux)+dx(uy))*N.x + dy(uy)*N.y ) ) //
+
+real FDtot = int1d(Th, 5, 6, 7)( Tx );
+real FLtot = int1d(Th, 5, 6, 7)( Ty );
+
+real FD1 = int1d(Th, 5)( Tx ),  FL1 = int1d(Th, 5)( Ty );
+real FD2 = int1d(Th, 6)( Tx ),  FL2 = int1d(Th, 6)( Ty );
+real FD3 = int1d(Th, 7)( Tx ),  FL3 = int1d(Th, 7)( Ty );
+
+cout << "=============================================" << endl;
+cout << " Forces hydrodynamiques (adimensionnees)      " << endl;
+cout << "---------------------------------------------" << endl;
+cout << " Nanoparticule 1 : FD = " << FD1 << "  FL = " << FL1 << endl;
+cout << " Nanoparticule 2 : FD = " << FD2 << "  FL = " << FL2 << endl;
+cout << " Nanoparticule 3 : FD = " << FD3 << "  FL = " << FL3 << endl;
+cout << "---------------------------------------------" << endl;
+cout << " Total           : FD = " << FDtot << "  FL = " << FLtot << endl;
+cout << "=============================================" << endl;
+
+real divU = sqrt( int2d(Th)( (dx(ux)+dy(uy))^2 ) );
+cout << "||div(u)||_L2 = " << divU << endl;
+
+// =====================================================================
+// POST-TRAITEMENT FLUIDE
+// =====================================================================
+plot(p,   value=true,  wait=false, cmm="Pression p", ps="FluidPressure.eps");
+plot([ux,uy],   value=true,  wait=false, cmm="Champ de vitesse [ux,uy]", ps="FluidVelocity.eps");
+plot(p, [ux,uy], value=true,  wait=false, cmm="Stokes - Nanoparticules", ps="StokesCombined.eps");
+
+// Contraintes fluide
+real muf = nu;
+fespace Wh(Th,P1dc);
+
+Wh sxx = -p + 2*muf*dx(ux);
+Wh syy = -p + 2*muf*dy(uy);
+Wh sxy =       muf*(dy(ux) + dx(uy));
+
+Wh vonMises = sqrt( sxx^2 + syy^2 - sxx*syy + 3*sxy^2 );
+cout << "Contrainte max fluide (von Mises) = " << vonMises[].max << endl;
+
+// =====================================================================
+// EXPORT VTK FLUIDE — MAILLAGE
+// =====================================================================
+fespace Rh(Th,P1dc);
+Rh Xdes=x, Ydes=y, Zdes=0, devdes;
+int id;
+
+{
+    ofstream par("Maillage."+Name+".vtk");
+    par <<"# vtk DataFile Version 1.0"<<endl;
+    par <<"2D Fluid Mesh"<<endl;
+    par <<"ASCII"<<endl<<" "<<endl;
+    par <<"DATASET UNSTRUCTURED_GRID"<<endl;
+    par <<"POINTS "<<Rh.ndof<<" float"<<endl;
+    for (id=0; id<Rh.ndof; id++)
+        par<< Xdes[][id] <<" "<< Ydes[][id] <<" "<< Zdes[][id] <<endl;
+    par <<"CELLS "<<Rh.nt<<" "<<(Rh.ndofK+1)*Rh.nt<<endl;
+    for (id=0; id<Rh.nt; id++)
+        par<<"3 "<<Rh(id,0)<<" "<<Rh(id,1)<<" "<<Rh(id,2)<<endl;
+    par <<" "<<endl<<"CELL_TYPES "<<Rh.nt<<endl;
+    for (id=0; id<Rh.nt; id++) par<<"5"<<endl;
+}
+
+// =====================================================================
+// EXPORT VTK FLUIDE — RÉSULTATS
+// =====================================================================
+{
+    ofstream paru("ResultsFluid"+Name+".vtk");
+    Rh velx = ux, vely = uy;
+    Rh speed = sqrt(ux*ux + uy*uy);
+    Rh vmF = vonMises;
+    Rh pres2 = p;
+
+    paru <<"# vtk DataFile Version 1.0"<<endl;
+    paru <<"Fluid Results Stokes"<<endl;
+    paru <<"ASCII"<<endl<<" "<<endl;
+    paru <<"DATASET UNSTRUCTURED_GRID"<<endl;
+    paru <<"POINTS "<<Rh.ndof<<" float"<<endl;
+    for (id=0; id<Rh.ndof; id++)
+        paru<< Xdes[][id] <<" "<< Ydes[][id] <<" "<< Zdes[][id] <<endl;
+    paru <<"CELLS "<<Rh.nt<<" "<<(Rh.ndofK+1)*Rh.nt<<endl;
+    for (id=0; id<Rh.nt; id++)
+        paru<<"3 "<<Rh(id,0)<<" "<<Rh(id,1)<<" "<<Rh(id,2)<<endl;
+    paru <<" "<<endl<<"CELL_TYPES "<<Rh.nt<<endl;
+    for (id=0; id<Rh.nt; id++) paru<<"5"<<endl;
+
+    paru <<" "<<endl<<"POINT_DATA "<<Rh.ndof<<endl;
+    paru <<"VECTORS velocity float"<<endl;
+    for (id=0; id<Rh.ndof; id++)
+        paru<< velx[][id] <<" "<< vely[][id] <<" 0"<<endl;
+    paru <<"SCALARS speed float"<<endl<<"LOOKUP_TABLE default"<<endl;
+    for (id=0; id<Rh.ndof; id++) paru<< speed[][id] <<endl;
+    paru <<"SCALARS vonMises_fluid float"<<endl<<"LOOKUP_TABLE default"<<endl;
+    for (id=0; id<Rh.ndof; id++) paru<< vmF[][id] <<endl;
+    paru <<"SCALARS pressure float"<<endl<<"LOOKUP_TABLE default"<<endl;
+    for (id=0; id<Rh.ndof; id++) paru<< pres2[][id] <<endl;
+}
+
+cout << endl;
+cout << "=====================================================" << endl;
+cout << " PARTIE II - DEFORMATION SOLIDE (ELASTICITE + NEWTON)" << endl;
+cout << "=====================================================" << endl;
+
+// =====================================================================
+// PARTIE II — PROBLÈME SOLIDE ÉLASTIQUE NON LINÉAIRE
+// Modèle : une seule nanoparticule (nano 2, centrale, label 6)
+// Forces : traction fluide + Lennard-Jones + frottement de Coulomb
+// Résolution : méthode de Newton avec linéarisation de l'opérateur
+// =====================================================================
+
+// ---------------------------------------------------------------------
+// PARAMÈTRES MATÉRIAU — Argent (Ag), adimensionnés avec Pc=1 MPa, Lc=1nm
+// E_Ag ~ 83 GPa  => E* = E/Pc = 83e9/1e6 = 83000
+// nu_Ag ~ 0.37
+// lambda = E*nu/((1+nu)*(1-2nu))
+// mu     = E/(2*(1+nu))
+// ---------------------------------------------------------------------
+real Enano  = 83000.;   // module de Young adimensionne (Ag)
+real nunano = 0.37;     // coefficient de Poisson (Ag)
+real lambda  = Enano*nunano / ((1.+nunano)*(1.-2.*nunano));
+real mus    = Enano / (2.*(1.+nunano));
+cout << "lambda = " << lambda << "  mu = " << mus << endl;
+
+// ---------------------------------------------------------------------
+// PARAMÈTRES LENNARD-JONES (adimensionnés)
+// epsLJ : énergie d'adhésion (adim. par Pc*Lc^2)
+// d0    : distance d'équilibre (adim. par Lc)
+// heq   : position initiale de l'interface inférieure de la nano
+// ---------------------------------------------------------------------
+real epsLJ = 1.e-3;   // énergie LJ adimensionnée
+real d0    = 0.2;     // distance d'équilibre adimensionnée (0.2 nm)
+
+// ---------------------------------------------------------------------
+// PARAMÈTRE DE FROTTEMENT DE COULOMB
+// epsReg : régularisation de |u_t| (évite div par 0)
+// muFric : coefficient de frottement (Ag/TiO2 typiquement 0.3)
+// ---------------------------------------------------------------------
+real muFric = 0.3;
+real epsReg = 1.e-8;  // régularisation de la norme tangentielle
+
+// ---------------------------------------------------------------------
+// CONSTRUCTION DU DOMAINE SOLIDE — nanoparticule 2 (centrale)
+// Semi-ellipse de demi-axes a (horizontal) et d (vertical)
+// Centre en (xI+a, yL), paroi inférieure à y=yL
+// Labels : 10=paroi_substrat (Gamma_wall), 11=surface_fluide (Gamma_fluid)
+// ---------------------------------------------------------------------
+// Centre de la nanoparticule 2
+real xC2 = xI + a;   // abscisse du centre
+real yC2 = yL;       // ordonnée de la base (interface particule/substrat)
+
+// Rayon horizontal et vertical
+real aS = a;   // demi-axe horizontal
+real dS = d;   // demi-axe vertical
+
+// Nombre de points sur les bords
+int nEllip = 60;  // demi-ellipse (surface fluide)
+int nBase  = 30;  // base plate (interface substrat)
+
+// Border : base inférieure (interface particule-substrat, Gamma_wall, label 10)
+border BbaseP(t=0,1){ x = (xC2+aS) + t*((xC2-aS)-(xC2+aS)); y = yC2; label=10; }
+
+// Border : demi-ellipse supérieure (surface fluide, Gamma_fluid, label 11)
+border BellipP(t=0,pi){ x = xC2 + aS*cos(t); y = yC2 + dS*sin(t); label=11; }
+
+// Construction du maillage solide
+mesh ThS = buildmesh( BbaseP(-nBase) + BellipP(nEllip) );
+plot(ThS,  wait=false, cmm="Maillage solide initial", ps="SolidMeshInitial.eps");
+
+// Raffinement adaptatif du maillage solide près de l'interface
+fespace VhSinit(ThS, P2);
+VhSinit distS = (y - yC2) / dS;  // distance normalisée à la base
+real hminS = 0.3*dS/nEllip, hmaxS = 8.*hminS;
+VhSinit SmeshS = hmaxS*distS + hminS*(1.-distS);
+mesh ThSA = adaptmesh(ThS, SmeshS, hmin=hminS, hmax=hmaxS,
+                      IsMetric=1, err=0.01, nbvx=50000);
+plot(ThSA,  wait=false, cmm="Maillage solide raffine", ps="SolidMeshRefined.eps");
+
+// =====================================================================
+// ESPACES EF SOLIDE — P2 pour les déplacements
+// =====================================================================
+fespace Ws(ThSA, P2);
+Ws u1, u2;       // déplacements courants
+Ws du1, du2;     // incrément Newton
+Ws v1, v2;       // fonctions test
+
+// =====================================================================
+// INTERPOLATION DE LA TRACTION FLUIDE SUR LA SURFACE SOLIDE
+// On évalue le champ de traction fluide (Tx, Ty) sur Gamma_fluid (label 11)
+// en utilisant la solution Stokes déjà calculée sur ThF
+// =====================================================================
+// Projection des composantes de traction fluide dans l'espace solide
+// La traction fluide est calculée depuis la solution Stokes (ux,uy,p) sur ThF
+// On définit des fonctions qui interpolent depuis le maillage fluide vers le
+// maillage solide via la composition de fonctions FreeFEM
+
+// Composantes du tenseur des contraintes fluide (interpolées depuis ThF)
+func real TxFluid(real xx, real yy) {
+    return -p(xx,yy)*N.x + 2.*nu*( dx(ux)(xx,yy)*N.x
+           + 0.5*(dy(ux)(xx,yy)+dx(uy)(xx,yy))*N.y );
+}
+func real TyFluid(real xx, real yy) {
+    return -p(xx,yy)*N.y + 2.*nu*( 0.5*(dy(ux)(xx,yy)+dx(uy)(xx,yy))*N.x
+           + dy(uy)(xx,yy)*N.y );
+}
+
+// Projection des contraintes fluide sur le maillage solide (P1dc)
+fespace WsP1(ThSA, P1dc);
+WsP1 SxxF, SyyF, SxyF;
+SxxF = -p(x,y) + 2.*nu*dx(ux)(x,y);
+SyyF = -p(x,y) + 2.*nu*dy(uy)(x,y);
+SxyF =  nu*(dy(ux)(x,y) + dx(uy)(x,y));
+
+// Facteur de couplage fluide-structure (1 = couplage complet)
+real coupling = 1.0;
+
+// =====================================================================
+// MACROS ÉLASTICITÉ + LENNARD-JONES + COULOMB
+// =====================================================================
+
+// Divergence
+macro Div(w1,w2) (dx(w1)+dy(w2)) // EOM
+
+// Tenseur des déformations symétrique : eps(u):eps(v)
+macro Epseps(u1,u2,v1,v2)
+    ( dx(u1)*dx(v1) + dy(u2)*dy(v2)
+    + 0.5*(dy(u1)+dx(u2))*(dy(v1)+dx(v2)) ) // EOM
+
+// Forme bilinéaire élastique a(u,v)
+macro Abilin(u1,u2,v1,v2)
+    ( lambda*Div(u1,u2)*Div(v1,v2) + 2.*mus*Epseps(u1,u2,v1,v2) ) // EOM
+
+// Composante normale du déplacement sur Gamma_wall (label 10 : n=(0,-1) => u_n=-u2)
+// Sur la base inférieure de la semi-ellipse, la normale extérieure pointe vers le bas : n=(0,-1)
+// donc u_n = u.n = -u2
+macro uNormal(u2)  (-u2) // EOM
+
+// Composante tangentielle sur Gamma_wall (u_t = u1 car n=(0,-1))
+macro uTangent(u1) (u1) // EOM
+
+// Norme régularisée de u_t (évite la singularité au point de retournement)
+macro uTnorm(u1) sqrt(u1*u1 + epsReg*epsReg) // EOM
+
+// Distance particule-substrat après déformation (h = d0 - u_n = d0 + u2)
+// Sur Gamma_wall, n=(0,-1), u_n = -u2, donc h = h0 + u2 (> 0 si pas de pénétration)
+// On impose un plancher à 1e-12 pour éviter la singularité LJ
+macro dLJ(u2) max(d0 + u2, 1.e-12) // EOM
+
+// Force de Lennard-Jones (normale, en ey) : F_LJ = -dE/dh
+// F = 12*eps/d0 * [(d0/h)^13 - (d0/h)^7]
+// > 0 : répulsion (h < d0),  < 0 : attraction (h > d0)
+macro FLJmac(u2) ( 12.*epsLJ/d0*( (d0/dLJ(u2))^13 - (d0/dLJ(u2))^7 ) ) // EOM
+
+// Rigidité tangente de Lennard-Jones : kappa = -dF_LJ/dh = d²E/dh²
+macro kapLJ(u2) ( 12.*epsLJ/(d0*d0)*( 13.*(d0/dLJ(u2))^14 - 7.*(d0/dLJ(u2))^8 ) ) // EOM
+
+// Contact actif : vrai si la particule est en compression contre le substrat (u_n < 0 <=> u2 < 0 après init)
+// [sigma_n]_- = partie négative de la contrainte normale (compression)
+// On approxime sigma_n par la pression LJ : sigma_n ~ -F_LJ (signe)
+// Contact actif si F_LJ > 0 (répulsion, i.e. h < d0)
+macro contactActive(u2) ( (d0 + u2 < d0) ? 1. : 0. ) // EOM
+
+// Force de frottement de Coulomb régularisée (Qδ)
+// F_fr = -Cf * [sigma_n]_- * u_t / |u_t|
+// On utilise FLJ comme proxy pour la pression normale : S = max(F_LJ, 0)
+macro FricForce(u1,u2) ( -muFric * max(FLJmac(u2),0.) * uTangent(u1) / uTnorm(u1) ) // EOM
+
+// Rigidité tangentielle Coulomb (dérivée par rapport à u_t)
+macro Kt(u1,u2) ( muFric * max(FLJmac(u2),0.) * epsReg^2 / uTnorm(u1)^3 ) // EOM
+
+// =====================================================================
+// INITIALISATION
+// =====================================================================
+u1 = 0.;
+u2 = 0.;
+
+// =====================================================================
+// BOUCLE DE NEWTON
+// Résolution de : a(u+du, v) + j(u+du, v) = l(v) pour tout v
+// Système tangent à chaque itération k :
+//   a(du,v) + dj/du(u;du,v) = l(v) - a(u,v) - j(u,v)    [résidu]
+// =====================================================================
+int iterMax = 50;
+real tol    = 1.e-8;
+real alpha  = 1.0;    // pas de Newton (1 = Newton pur, < 1 = amortissement)
+
+cout << endl << "--- Demarrage Newton (elasticite non lineaire) ---" << endl;
+
+for(int k=0; k<iterMax; k++) {
+
+    // ------------------------------------------------------------------
+    // SYSTÈME TANGENT DE NEWTON
+    // Jacobien J(du,v) = a(du,v)
+    //                  + int_{Gamma_wall} kappa_LJ * du2 * v2
+    //                  + int_{Gamma_wall} Kt(u) * du1 * v1
+    // Résidu R(v)      = a(u,v)
+    //                  - l_fluide(v) [traction fluide sur Gamma_fluid]
+    //                  - int_{Gamma_fluid} F_LJ_surf * v2
+    //                  - int_{Gamma_wall} F_LJ * v2
+    //                  - int_{Gamma_wall} F_fr * v1
+    // ------------------------------------------------------------------
+    problem NewtonStep([du1, du2], [v1, v2], solver=UMFPACK) =
+        // ---- Partie bilinéaire tangente ----
+        int2d(ThSA)(
+            // Élasticité linéaire : a(du, v)
+            Abilin(du1, du2, v1, v2)
+        )
+        // Rigidité tangente Lennard-Jones sur Gamma_wall (label 10)
+        // kappa_LJ * du_n * v_n  avec u_n = -u2, du_n = -du2, v_n = -v2
+        // => kappa_LJ * du2 * v2
+        + int1d(ThSA, 10)(
+            kapLJ(u2) * du2 * v2
+        )
+        // Rigidité tangente Coulomb sur Gamma_wall (label 10)
+        // Kt(u) * du_t * v_t
+        + int1d(ThSA, 10)(
+            Kt(u1,u2) * du1 * v1
+        )
+        // ---- Résidu (second membre) : -(R(u) · v) ----
+        // R = a(u,v) - l(v) + j_bords(u,v)
+        // On passe le résidu en second membre : -R = l(v) - a(u,v) - j_bords(u,v)
+
+        // Terme élastique résiduel : -a(u, v)
+        - int2d(ThSA)(
+            Abilin(u1, u2, v1, v2)
+        )
+        // Traction fluide sur Gamma_fluid (label 11) : +l_fluide(v)
+        // T_fluide . v = (sigma_f n) . v interpolé depuis le maillage fluide
+        + int1d(ThSA, 11)(
+            coupling * ( (SxxF*N.x + SxyF*N.y)*v1
+                       + (SxyF*N.x + SyyF*N.y)*v2 )
+        )
+        // Force Lennard-Jones sur Gamma_wall (label 11 = surface fluide)
+        // sur la surface fluide, on applique aussi la LJ (modèle de l'article)
+        // convention : F_LJ agit en direction de n_ext = +ey sur Gamma_fluid
+        // On intègre sur Gamma_wall (label 10) la LJ en direction -ey (vers l'ext)
+        + int1d(ThSA, 10)(
+            FLJmac(u2) * v2
+        )
+        // Force de frottement de Coulomb sur Gamma_wall (label 10)
+        + int1d(ThSA, 10)(
+            FricForce(u1,u2) * v1
+        )
+        // Pas de condition de Dirichlet : la particule est libre (flottante sur LJ)
+        // Remarque : si le problème est mal posé sans BC Dirichlet, décommenter :
+        // + on(10, u2=0.)
+        ;
+
+    // Résoudre pour l'incrément (du1, du2)
+    NewtonStep;
+
+    // Mise à jour
+    u1[] += alpha * du1[];
+    u2[] += alpha * du2[];
+
+    // Critère de convergence relatif
+    real ndu = sqrt( int2d(ThSA)( du1^2 + du2^2 ) );
+    real nuu = sqrt( int2d(ThSA)( u1^2  + u2^2  ) ) + 1.e-30;
+    real relErr = alpha * ndu / nuu;
+
+    cout << "  iter=" << k+1 << "  relErr=" << relErr
+         << "  ||du||=" << ndu << endl;
+
+    if(relErr < tol) {
+        cout << "  => Convergence Newton atteinte en " << k+1 << " iterations." << endl;
+        break;
+    }
+    if(k == iterMax-1)
+        cout << "  => ATTENTION : non converge. Reduire alpha ou augmenter iterMax." << endl;
+}
+
+// =====================================================================
+// POST-TRAITEMENT SOLIDE
+// =====================================================================
+fespace PhS(ThSA, P1);
+PhS s11, s22, s12, vmSolid, uxs, uys;
+
+// Tenseur des contraintes de Cauchy dans le solide
+s11 = lambda*Div(u1,u2) + 2.*mus*dx(u1);
+s22 = lambda*Div(u1,u2) + 2.*mus*dy(u2);
+s12 = mus*(dy(u1) + dx(u2));
+
+// Critère de von Mises (eq. 33 du rapport)
+vmSolid = sqrt( s11^2 - s11*s22 + s22^2 + 3.*s12^2 );
+
+cout << endl;
+cout << "=============================================" << endl;
+cout << " Resultats solide (adimensionnes)            " << endl;
+cout << "---------------------------------------------" << endl;
+cout << " ||u||_inf  = " << sqrt(u1[].linfty^2+u2[].linfty^2) << endl;
+cout << " sigma_VM max = " << vmSolid[].max << endl;
+cout << "=============================================" << endl;
+
+// Bilan des forces sur la particule
+real FfluidX = int1d(ThSA, 11)( (SxxF*N.x + SxyF*N.y) );
+real FfluidY = int1d(ThSA, 11)( (SxyF*N.x + SyyF*N.y) );
+real FadhY   = int1d(ThSA, 10)( FLJmac(u2) );
+real FfrotX  = int1d(ThSA, 10)( FricForce(u1,u2) );
+cout << " Ffluide_x    = " << FfluidX << endl;
+cout << " Ffluide_y    = " << FfluidY << endl;
+cout << " Fadh_y (LJ)  = " << FadhY   << endl;
+cout << " Ffrot_x (Cf) = " << FfrotX  << endl;
+
+// =====================================================================
+// CALCUL DU GLISSEMENT TANGENTIEL (pour visualisation VTK)
+// Glissement = déplacement tangentiel sur Gamma_wall (label 10)
+// Glissement = u_t = u1 sur la base (n = (0,-1), t = (1,0))
+// =====================================================================
+PhS glissement;
+// Projection du glissement sur le domaine (= u1 partout, significatif sur label 10)
+glissement = u1;
+
+// Norme du déplacement total
+PhS deplNorm;
+deplNorm = sqrt(u1^2 + u2^2);
+
+// =====================================================================
+// VISUALISATION FreeFEM++
+// =====================================================================
+plot(ThSA, [u1,u2],   value=true,  wait=false,
+     cmm="Deplacement solide [u1,u2]", ps="SolidDisplacement.eps");
+plot(ThSA, vmSolid,   value=true,  wait=false,
+     cmm="Contrainte von Mises solide", ps="SolidVonMises.eps");
+plot(ThSA, glissement,   value=true,  wait=false,
+     cmm="Glissement tangentiel u1 sur Gamma_wall", ps="SolidSlip.eps");
+
+// Maillage déformé (facteur d'amplification automatique)
+real scaleP = min(0.20*dS / (u1[].linfty + u2[].linfty + 1.e-30), 1.e4);
+cout << "Facteur amplification maillage deforme : x" << scaleP << endl;
+mesh ThSdef = movemesh(ThSA, [x + scaleP*u1, y + scaleP*u2]);
+plot(ThSdef,  wait=false, cmm="Maillage deforme (x"+scaleP+")", ps="SolidDeformedMesh.eps");
+
+// =====================================================================
+// EXPORT VTK SOLIDE — DÉFORMATION + GLISSEMENT + VON MISES
+// Format compatible ParaView
+// =====================================================================
+{
+    fespace RhS(ThSA, P1dc);
+    RhS XdesS=x, YdesS=y, ZdesS=0;
+    RhS u1des=u1, u2des=u2;
+    RhS vmdes=vmSolid;
+    RhS s11des=s11, s22des=s22, s12des=s12;
+    RhS glisdes=glissement;
+    RhS depldes=deplNorm;
+
+    // ----------------------------------------------------------------
+    // Calcul du glissement sur le bord (valeur sur l'ensemble du domaine,
+    // significatif sur Gamma_wall via la trace)
+    // On stocke également le gap h = d0 + u2 (distance particule-substrat)
+    // ----------------------------------------------------------------
+    RhS gapdes;
+    gapdes = dLJ(u2);
+
+    // ----------------------------------------------------------------
+    // Fichier VTK solide (maillage non déformé avec champs)
+    // ----------------------------------------------------------------
+    {
+        ofstream fvtk("ResultsSolid"+Name+".vtk");
+        fvtk <<"# vtk DataFile Version 1.0"<<endl;
+        fvtk <<"Solid Nanoparticle FSI Results"<<endl;
+        fvtk <<"ASCII"<<endl<<" "<<endl;
+        fvtk <<"DATASET UNSTRUCTURED_GRID"<<endl;
+        fvtk <<"POINTS "<<RhS.ndof<<" float"<<endl;
+        for(id=0; id<RhS.ndof; id++)
+            fvtk<< XdesS[][id] <<" "<< YdesS[][id] <<" "<< ZdesS[][id] <<endl;
+        fvtk<<"CELLS "<<RhS.nt<<" "<<(RhS.ndofK+1)*RhS.nt<<endl;
+        for(id=0; id<RhS.nt; id++)
+            fvtk<<"3 "<<RhS(id,0)<<" "<<RhS(id,1)<<" "<<RhS(id,2)<<endl;
+        fvtk<<" "<<endl<<"CELL_TYPES "<<RhS.nt<<endl;
+        for(id=0; id<RhS.nt; id++) fvtk<<"5"<<endl;
+
+        fvtk<<" "<<endl<<"POINT_DATA "<<RhS.ndof<<endl;
+
+        // Vecteur déplacement [u1, u2, 0]
+        fvtk<<"VECTORS displacement float"<<endl;
+        for(id=0; id<RhS.ndof; id++)
+            fvtk<< u1des[][id] <<" "<< u2des[][id] <<" 0"<<endl;
+
+        // Norme du déplacement
+        fvtk<<"SCALARS displacement_norm float"<<endl<<"LOOKUP_TABLE default"<<endl;
+        for(id=0; id<RhS.ndof; id++) fvtk<< depldes[][id] <<endl;
+
+        // Contrainte de von Mises
+        fvtk<<"SCALARS vonMises_solid float"<<endl<<"LOOKUP_TABLE default"<<endl;
+        for(id=0; id<RhS.ndof; id++) fvtk<< vmdes[][id] <<endl;
+
+        // Composantes du tenseur des contraintes
+        fvtk<<"SCALARS sigma11 float"<<endl<<"LOOKUP_TABLE default"<<endl;
+        for(id=0; id<RhS.ndof; id++) fvtk<< s11des[][id] <<endl;
+        fvtk<<"SCALARS sigma22 float"<<endl<<"LOOKUP_TABLE default"<<endl;
+        for(id=0; id<RhS.ndof; id++) fvtk<< s22des[][id] <<endl;
+        fvtk<<"SCALARS sigma12 float"<<endl<<"LOOKUP_TABLE default"<<endl;
+        for(id=0; id<RhS.ndof; id++) fvtk<< s12des[][id] <<endl;
+
+        // Glissement tangentiel u1 (traction tangentielle sur la base)
+        fvtk<<"SCALARS slip_tangential float"<<endl<<"LOOKUP_TABLE default"<<endl;
+        for(id=0; id<RhS.ndof; id++) fvtk<< glisdes[][id] <<endl;
+
+        // Gap h = distance particule-substrat après déformation
+        fvtk<<"SCALARS gap_h float"<<endl<<"LOOKUP_TABLE default"<<endl;
+        for(id=0; id<RhS.ndof; id++) fvtk<< gapdes[][id] <<endl;
+    }
+
+    // ----------------------------------------------------------------
+    // Fichier VTK solide DÉFORMÉ (maillage movemesh)
+    // Coordonnées = position déformée, champs identiques
+    // ----------------------------------------------------------------
+    {
+        fespace RhSD(ThSdef, P1dc);
+        RhSD XdesSD=x, YdesSD=y, ZdesSD=0;
+
+        // Projection des champs sur le maillage déformé
+        RhSD u1D=u1, u2D=u2;
+        RhSD vmD=vmSolid;
+        RhSD glisD=glissement;
+        RhSD gapD=gapdes;
+        RhSD s11D=s11, s22D=s22, s12D=s12;
+        RhSD deplD=deplNorm;
+
+        ofstream fvtkD("ResultsSolidDeformed"+Name+".vtk");
+        fvtkD <<"# vtk DataFile Version 1.0"<<endl;
+        fvtkD <<"Solid Nanoparticle DEFORMED Mesh"<<endl;
+        fvtkD <<"ASCII"<<endl<<" "<<endl;
+        fvtkD <<"DATASET UNSTRUCTURED_GRID"<<endl;
+        fvtkD <<"POINTS "<<RhSD.ndof<<" float"<<endl;
+        for(id=0; id<RhSD.ndof; id++)
+            fvtkD<< XdesSD[][id] <<" "<< YdesSD[][id] <<" "<< ZdesSD[][id] <<endl;
+        fvtkD<<"CELLS "<<RhSD.nt<<" "<<(RhSD.ndofK+1)*RhSD.nt<<endl;
+        for(id=0; id<RhSD.nt; id++)
+            fvtkD<<"3 "<<RhSD(id,0)<<" "<<RhSD(id,1)<<" "<<RhSD(id,2)<<endl;
+        fvtkD<<" "<<endl<<"CELL_TYPES "<<RhSD.nt<<endl;
+        for(id=0; id<RhSD.nt; id++) fvtkD<<"5"<<endl;
+
+        fvtkD<<" "<<endl<<"POINT_DATA "<<RhSD.ndof<<endl;
+
+        fvtkD<<"VECTORS displacement float"<<endl;
+        for(id=0; id<RhSD.ndof; id++)
+            fvtkD<< u1D[][id] <<" "<< u2D[][id] <<" 0"<<endl;
+
+        fvtkD<<"SCALARS displacement_norm float"<<endl<<"LOOKUP_TABLE default"<<endl;
+        for(id=0; id<RhSD.ndof; id++) fvtkD<< deplD[][id] <<endl;
+
+        fvtkD<<"SCALARS vonMises_solid float"<<endl<<"LOOKUP_TABLE default"<<endl;
+        for(id=0; id<RhSD.ndof; id++) fvtkD<< vmD[][id] <<endl;
+
+        fvtkD<<"SCALARS sigma11 float"<<endl<<"LOOKUP_TABLE default"<<endl;
+        for(id=0; id<RhSD.ndof; id++) fvtkD<< s11D[][id] <<endl;
+        fvtkD<<"SCALARS sigma22 float"<<endl<<"LOOKUP_TABLE default"<<endl;
+        for(id=0; id<RhSD.ndof; id++) fvtkD<< s22D[][id] <<endl;
+        fvtkD<<"SCALARS sigma12 float"<<endl<<"LOOKUP_TABLE default"<<endl;
+        for(id=0; id<RhSD.ndof; id++) fvtkD<< s12D[][id] <<endl;
+
+        fvtkD<<"SCALARS slip_tangential float"<<endl<<"LOOKUP_TABLE default"<<endl;
+        for(id=0; id<RhSD.ndof; id++) fvtkD<< glisD[][id] <<endl;
+
+        fvtkD<<"SCALARS gap_h float"<<endl<<"LOOKUP_TABLE default"<<endl;
+        for(id=0; id<RhSD.ndof; id++) fvtkD<< gapD[][id] <<endl;
+    }
+}
+
+// =====================================================================
+// RÉSUMÉ FINAL
+// =====================================================================
+cout << endl;
+cout << "=====================================================" << endl;
+cout << " FICHIERS VTK GENERES :" << endl;
+cout << "  - Maillage."          << Name << ".vtk          (maillage fluide)"    << endl;
+cout << "  - ResultsFluid"       << Name << ".vtk          (champs fluide)"      << endl;
+cout << "  - ResultsSolid"       << Name << ".vtk          (solide, maillage ref)"<< endl;
+cout << "  - ResultsSolidDeformed"<<Name<< ".vtk          (solide, maillage def)"<< endl;
+cout << "-----------------------------------------------------" << endl;
+cout << " Scalaires disponibles sous ParaView :"                                  << endl;
+cout << "   displacement_norm, vonMises_solid, sigma11/22/12" << endl;
+cout << "   slip_tangential  : glissement tangentiel u1 (Gamma_wall)" << endl;
+cout << "   gap_h            : distance particule-substrat h(u)"      << endl;
+cout << " Vecteurs : displacement, velocity"                                      << endl;
+cout << "=====================================================" << endl;

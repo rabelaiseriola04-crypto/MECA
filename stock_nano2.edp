@@ -64,12 +64,12 @@ cout<<"V="<<V<<endl;
 real eps=1e-13;
 
 plot(SFE(mdl)+SGF(Melip)+SHG(2*mdl)+SIH(Melip)+SJI(2*mdl)
-    +SKJ(Melip)+SLK(mdl)+SNL(mv)+SMN(mh)+SEM(mv));
+    +SKJ(Melip)+SLK(mdl)+SNL(mv)+SMN(mh)+SEM(mv), ps="Boundaries.eps");
 
 mesh ThF = buildmesh(
       SFE(mdl)+SGF(Melip)+SHG(2*mdl)+SIH(Melip)+SJI(2*mdl)
     + SKJ(Melip)+SLK(mdl)+SNL(mv)+SMN(mh)+SEM(mv) );
-plot(ThF, wait=true);
+plot(ThF, wait=true, ps="Mesh_initial.eps");
 
 // Métrique pour le raffinement
 func real Dist(real xx, real yy) {
@@ -87,11 +87,11 @@ VhF fhF=Dist(x,y)/(5*e), Smesh;
 real hminF=0.5*dl/mdl, hmaxF=20*hminF;
 Smesh = hmaxF*fhF + hminF*(1-fhF);
 cout<<hminF<<" "<<hmaxF<<" "<<Smesh[].min<<" "<<Smesh[].max<<endl;
-plot(ThF, Smesh, fill=true, wait=true);
+plot(ThF, Smesh, fill=true, wait=true, ps="Mesh_metric.eps");
 
 mesh Th = adaptmesh(ThF, Smesh, hmin=hminF, hmax=hmaxF,
                     IsMetric=1, err=0.01, nbvx=100000);
-plot(Th, wait=true);
+plot(Th, wait=true, ps="Mesh_refined.eps");
 
 // =====================================================================
 // PARAMÈTRES PHYSIQUES
@@ -174,9 +174,9 @@ cout << "||div(u)||_L2 = " << divU << endl;
 // =====================================================================
 // POST-TRAITEMENT GRAPHIQUE
 // =====================================================================
-plot(p, fill=true, value=true, wait=1, cmm="Pression p");
-plot([ux,uy], fill=true, value=true, wait=1, cmm="Champ de vitesse [ux,uy]");
-plot(p, [ux,uy], value=true, wait=1, cmm="Stokes - Nanoparticules");
+plot(p, fill=true, value=true, wait=1, cmm="Pression p", ps="Pressure.eps");
+plot([ux,uy], fill=true, value=true, wait=1, cmm="Champ de vitesse [ux,uy]", ps="Velocity.eps");
+plot(p, [ux,uy], value=true, wait=1, cmm="Stokes - Nanoparticules", ps="Stokes_combined.eps");
 
 // Sauvegarde brute (texte)
 {

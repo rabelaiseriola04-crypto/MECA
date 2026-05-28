@@ -254,12 +254,12 @@ cout << "VM_max     = " << vonMises[].max << " Pa"  << endl;
 cout << "sigmaN_min = " << sigmaN[].min   << " Pa"  << endl;
 
 plot([u1,u2], wait=true, value=true, fill=true,
-     cmm="Deplacement [m] - Newton global");
+     cmm="Deplacement [m] - Newton global", ps="Displacement.eps");
 plot(vonMises, wait=true, value=true, fill=true,
-    cmm="Von Mises [Pa] - Newton global");
+    cmm="Von Mises [Pa] - Newton global", ps="VonMises.eps");
 
 mesh Thdef = movemesh(Th, [x+u1, y+u2]);
-plot(Thdef, wait=true, cmm="Maillage deforme");
+plot(Thdef, wait=true, cmm="Maillage deforme", ps="Deformed_mesh.eps");
 
 load "iovtk"
 

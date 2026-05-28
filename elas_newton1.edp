@@ -108,7 +108,7 @@ mesh ThS = buildmesh(
   + SIJ(2*mdl)+ SJK(Melip)+ SKL(mdl)
   + SVW(2*mdl)+ SXY(2*mdl)+ SOZ(2*mdl)
 );
-plot(ThS, wait=true, cmm="Maillage solide initial");
+plot(ThS, wait=true, cmm="Maillage solide initial", ps="Mesh_solid_initial.eps");
 
 // Raffinement par metrique (proche de la face fluide y=yL)
 func real Dist3(real xx, real yy) { return abs(yy - yL); }
@@ -122,7 +122,7 @@ cout << "hminS=" << hminS << "  hmaxS=" << hmaxS
 
 ThS = adaptmesh(ThS, Smesh2, hmin=hminS, hmax=hmaxS,
                 IsMetric=1, err=0.01, nbvx=100000);
-plot(ThS, wait=true, cmm="Maillage solide adapte");
+plot(ThS, wait=true, cmm="Maillage solide adapte", ps="Mesh_solid_refined.eps");
 
 // ------------------------------------------------------------
 // 7. AFFECTATION DES MATERIAUX PAR REGION
@@ -151,8 +151,8 @@ mu     = mu1*(reg==reg(x1,y1))
        + mu3*(reg==reg(x4,y4))
        + mu3*(reg==reg(x5,y5));
 
-plot(lambda, fill=true, value=true, wait=true, cmm="lambda (Pa)");
-plot(mu,     fill=true, value=true, wait=true, cmm="mu (Pa)");
+plot(lambda, fill=true, value=true, wait=true, cmm="lambda (Pa)", ps="Lambda_material.eps");
+plot(mu,     fill=true, value=true, wait=true, cmm="mu (Pa)", ps="Mu_material.eps");
 
 // ------------------------------------------------------------
 // 8. ESPACES ELEMENTS FINIS
@@ -293,12 +293,12 @@ cout << "VM_max     = " << vonMises[].max << " Pa" << endl;
 cout << "sigmaN_min = " << sigmaN[].min   << " Pa" << endl;
 
 plot([u1,u2], wait=true, value=true, fill=true,
-     cmm="Deplacement [m] - Newton global");
+     cmm="Deplacement [m] - Newton global", ps="Displacement_solid.eps");
 plot(vonMises, wait=true, value=true, fill=true,
-     cmm="Von Mises [Pa] - Newton global");
+     cmm="Von Mises [Pa] - Newton global", ps="VonMises_solid.eps");
 
 mesh Thdef = movemesh(ThS, [x+u1, y+u2]);
-plot(Thdef, wait=true, cmm="Maillage deforme");
+plot(Thdef, wait=true, cmm="Maillage deforme", ps="Deformed_solid_mesh.eps");
 
 // ------------------------------------------------------------
 // 12. EXPORT VTK

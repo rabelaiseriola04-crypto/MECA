@@ -151,13 +151,13 @@ cout << "||div(u)||_L2 = " << divU << endl;
 // Post-traitement
 // =====================
 plot(p, fill=true, value=true, wait=1, 
-     cmm="Pression p");
+     cmm="Pression p", ps="Pressure_Stokes.eps");
 
 plot([ux,vx], fill=true, value=true, wait=1, 
-     cmm="Champ de vitesse [ux,vx]");
+     cmm="Champ de vitesse [ux,vx]", ps="Velocity_Stokes.eps");
 
 plot(p, [ux,vx], value=true, wait=1, 
-     cmm="Stokes stationnaire - Nanoparticule");
+     cmm="Stokes stationnaire - Nanoparticule", ps="Stokes_full.eps");
 
 // Sauvegarde pour Paraview
 {
