@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<VTKFile type="Collection" version="0.1">
+  <Collection>
+    <DataSet timestep="0" file="SolidStep_Nanoparticule2_0.vtk"/>
+    <DataSet timestep="0.1" file="SolidStep_Nanoparticule2_1.vtk"/>
+    <DataSet timestep="0.2" file="SolidStep_Nanoparticule2_2.vtk"/>
+    <DataSet timestep="0.3" file="SolidStep_Nanoparticule2_3.vtk"/>
+    <DataSet timestep="0.4" file="SolidStep_Nanoparticule2_4.vtk"/>
+    <DataSet timestep="0.5" file="SolidStep_Nanoparticule2_5.vtk"/>
+    <DataSet timestep="0.6" file="SolidStep_Nanoparticule2_6.vtk"/>
+    <DataSet timestep="0.7" file="SolidStep_Nanoparticule2_7.vtk"/>
+    <DataSet timestep="0.8" file="SolidStep_Nanoparticule2_8.vtk"/>
+    <DataSet timestep="0.9" file="SolidStep_Nanoparticule2_9.vtk"/>
+    <DataSet timestep="1" file="SolidStep_Nanoparticule2_10.vtk"/>
+  </Collection>
+</VTKFile>
