@@ -1,4 +1,4 @@
-xvfb-run FreeFem++ .edp
+xvfb-run FreeFem++ Nano3.edp
 
 for f in *.eps; do convert "$f" "${f%.eps}.png" && rm "$f"; done
 
