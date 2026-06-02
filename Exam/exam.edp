@@ -1,0 +1,358 @@
+string Name = "CarreTrou";
+// ============================================================
+// Examen Mecanique Numerique/Solides -- MACS2 2025-2026
+// Deformation d'un carre avec un trou
+// Questions 6-10 : maillage, EF P2, penalisation, Lagrange,
+//                  visualisation, critere de von Mises
+// Parametres : a=1, F=0.1, lambda=1, mu=1
+// ============================================================
+
+// --- Parametres du probleme --------------------------------
+real a     = 1.0;
+real Fload = 0.1;
+real lam   = 1.0;   // coefficient de Lame lambda
+real mu    = 1.0;   // coefficient de Lame mu
+real R     = 0.3;   // rayon du trou (a adapter)
+real eps   = 1e-5;  // parametre de penalisation
+
+
+// Deviateur de contrainte : |sigma^D|^2 = sigma:sigma - (trσ)^2/2
+// Pour deformations planes :
+//   sig11 = lam*(eps11+eps22) + 2*mu*eps11
+//   sig22 = lam*(eps11+eps22) + 2*mu*eps22
+//   sig12 = 2*mu*eps12
+//   sig33 = lam*(eps11+eps22)   [hors plan]
+// trσ = sig11+sig22+sig33 = (3*lam+2*mu)*(eps11+eps22)
+
+// ============================================================
+// QUESTION 6 : Maillage
+// ============================================================
+
+// Contour exterieur : carre [-a,a]x[-a,a], parcouru dans le sens trigonometrique
+// Les labels de bord : 1=bas, 2=droite, 3=haut, 4=gauche, 5=trou
+
+border Cbas  (t=-a,a){ x= t;  y=-a;  label=1; }
+border Cdroite(t=-a,a){ x= a;        y= t; label=2; }  
+border Chaut (t=a,-a){ x=t;  y= a;  label=3; } 
+border Cgauche(t=a,-a){ x=-a;        y=t; label=4; } 
+
+// Trou circulaire (sens horaire pour que la normale pointe vers l'exterieur du domaine)
+border Ctrou (t=0,1){ x=R*cos(-2*pi*t); y=R*sin(-2*pi*t); label=5; }
+
+int n = 20;  // finesse du maillage
+
+mesh Th = buildmesh( Cbas(n) + Cgauche(n) + Chaut(n) + Cdroite(n) + Ctrou(4*n) );
+
+plot(Th, wait=0, ps="maillage.eps");
+
+// ============================================================
+// QUESTION 7 : EF P2, penalisation
+// ============================================================
+
+// --- Macros utilitaires ------------------------------------
+macro div(ux,uy)  (dx(ux) + dy(uy))                              //
+macro eps11(ux,uy) (dx(ux))                                       //
+macro eps22(ux,uy) (dy(uy))                                       //
+macro eps12(ux,uy) (0.5*(dy(ux)+dx(uy)))                          //
+
+fespace Vh2(Th, P2);
+Vh2 ux, uy, vx, vy;
+
+problem ElasticPenal(ux,uy, vx,vy) =
+    int2d(Th)(
+        lam*div(ux,uy)*div(vx,vy)
+        + mu*( eps11(ux,uy)*eps11(vx,vy)
+                + eps22(ux,uy)*eps22(vx,vy)
+                +2.* eps12(ux,uy)*eps12(vx,vy) )
+    )
+    + int1d(Th,5)(
+       (1./eps) * (ux*N.x + uy*N.y) * (vx*N.x + vy*N.y)
+    )
+     - int1d(Th,2)( -Fload*vx );
+ElasticPenal;
+
+// Deplacement total
+Vh2 unormp = sqrt(ux^2 + uy^2);
+
+plot([ux,uy], wait=0, fill=true, value=true,
+     cmm="Penalisation : champ de deplacement", ps="deplpenal.eps");
+plot(unormp, wait=0, fill=true, value=true,
+     cmm="Penalisation : norme du deplacement", ps="normpenal.eps");
+
+
+// Sauvegarde des solutions pénalisées
+Vh2 uxp = ux, uyp = uy;
+
+fespace Rh(Th,P1dc);
+Rh Xdes=x, Ydes=y, Zdes=0.;
+int id;
+
+ofstream paru("Resultats_penal_"+Name+".vtk");
+
+real mag = 1.;   // facteur d'amplification visuelle
+
+Xdes = x + mag*ux;
+Ydes = y + mag*uy;
+
+paru << "# vtk DataFile Version 2.0" << endl;
+paru << "Piece deformee" << endl;
+paru << "ASCII" << endl;
+paru << "DATASET UNSTRUCTURED_GRID" << endl;
+
+paru << "POINTS " << Rh.ndof << " float" << endl;
+for(id=0; id<Rh.ndof; id++)
+    paru << Xdes[][id] << " "
+         << Ydes[][id] << " "
+         << Zdes[][id] << endl;
+
+paru << "CELLS " << Rh.nt << " "
+     << (Rh.ndofK+1)*Rh.nt << endl;
+
+for(id=0; id<Rh.nt; id++)
+    paru << "3 "
+         << Rh(id,0) << " "
+         << Rh(id,1) << " "
+         << Rh(id,2) << endl;
+
+paru << "CELL_TYPES " << Rh.nt << endl;
+for(id=0; id<Rh.nt; id++)
+    paru << "5" << endl;
+
+
+// ============================================================
+// QUESTION 8 : EF P2, multiplicateurs de Lagrange
+// ============================================================
+
+// Espace mixte : (P2)^2 pour u, P1 pour le multiplicateur sur le bord 5
+// FreeFEM++ gere les espaces de trace via les espaces de bord.
+// On utilise ici une formulation P2/P1dc en prenant un espace continu sur le bord.
+
+fespace Vhmix(Th, P2);  // (ux, uy, lammult)
+// Note : pour le multiplicateur sur le bord, on utilise un espace global P1
+// restreint au bord 5 via les integrales de bord.
+
+Vhmix ux2, uy2, p;
+Vhmix vx2, vy2, q;
+
+//macro div(ux,uy)  (dx(ux) + dy(uy))                              //
+//macro eps11(ux,uy) (dx(ux))                                       //
+//macro eps22(ux,uy) (dy(uy))                                       //
+//macro eps12(ux,uy) (0.5*(dy(ux)+dx(uy))) 
+problem ElasticLagrange(ux2,uy2,p,vx2,vy2,q) =
+    int2d(Th)(
+        lam*div(ux2,uy2)*div(vx2,vy2)
+        + mu*( eps11(ux2,uy2)*eps11(vx2,vy2)
+                + eps22(ux2,uy2)*eps22(vx2,vy2)
+                + 2.*eps12(ux2,uy2)*eps12(vx2,vy2) )
+    )
+    + int1d(Th,5)( q*ux2 - p*vx2  )
+    +int2d(Th)(p*q*eps)// renndre la matrice inversible  avec une petite perturbation
+    - int1d(Th,2)( -Fload*vx2 );
+
+ElasticLagrange;
+// Deplacement total
+Vhmix unormp2 = sqrt(ux2^2 + uy2^2);
+
+plot([ux2,uy2], wait=0, fill=true, value=true,
+     cmm="Lagrange : champ de deplacement", ps="depllagrange.eps");
+
+// ============================================================
+// QUESTION 9 : Visualisation et comparaison
+// ============================================================
+
+// Erreur relative entre les deux approches
+fespace Vh2b(Th, P2);
+Vh2b errx = ux - ux2;
+Vh2b erry = uy - uy2;
+Vh2b errNorm = sqrt(errx^2 + erry^2);
+
+real errMax = errNorm[].max;
+real uMax   = unormp[].max;
+real uMax2  = unormp2[].max;
+cout << "Erreur max (penal vs Lagrange) = " << errMax << endl;
+cout << "Deplacement max (penal)         = " << uMax  << endl;
+cout << "Deplacement max (Lagrange)       = " << uMax2 << endl;
+cout << "Erreur relative                 = " << errMax/uMax << endl;
+
+plot(errNorm, wait=0, fill=true, value=true,
+     cmm="|upenal - uLagrange|", ps="erreurcomparaison.eps");
+
+// ============================================================
+// QUESTION 10 : Deviateur de contrainte et critere de von Mises
+// ============================================================
+
+// On travaille sur la solution Lagrange (plus precise)
+fespace Vh0(Th, P1);   // espace pour les contraintes
+
+Vh0 s11, s22, s12, s33;
+
+// Contraintes
+s11 = lam*(dx(ux2)+dy(uy2)) + 2.*mu*dx(ux2);
+s22 = lam*(dx(ux2)+dy(uy2)) + 2.*mu*dy(uy2);
+s12 = 2.*mu*0.5*(dy(ux2)+dx(uy2));
+s33 = lam*(dx(ux2)+dy(uy2));   // contrainte hors plan (deformations planes)
+
+// Pression hydrostatique p = tr(sigma)/3 (en 3D, avec sigma33)
+Vh0 trSig = s11 + s22 + s33;
+Vh0 p3    = trSig / 3.;
+
+// Deviateur : s^Dij = sij - p * deltaij
+Vh0 sD11 = s11 - p3;
+Vh0 sD22 = s22 - p3;
+Vh0 sD33 = s33 - p3;
+
+// |sigma^D|^2 = sD11^2 + sD22^2 + sD33^2 + 2*s12^2
+Vh0 normSD2 = sD11^2 + sD22^2 + sD33^2 + 2.*s12^2;
+Vh0 normSD  = sqrt(normSD2);
+
+plot(normSD, wait=0, fill=true, value=true,
+     cmm="|sigma^D| (deviateur de contrainte, Lagrange)", ps="deviateur.eps");
+
+// Critere de von Mises : |sigma^D| < tau0
+// Fmax tel que le max de |sigma^D| = tau0
+real tau0    = 1.0;
+real normMax = normSD[].max;
+
+cout << "Max |sigma^D| pour F=" << Fload << " : " << normMax << endl;
+
+// |sigma^D| est lineaire en F (probleme lineaire)
+real Fmax = tau0 * Fload / normMax;
+cout << "Fmax (critere von Mises, tau0=" << tau0 << ") = " << Fmax << endl;
+
+// Visualisation de la zone plastifiee (|sigD| / tau0 > 1 signifie plastification)
+Vh0 vonMisesRatio = normSD / tau0;
+plot(vonMisesRatio, wait=0, fill=true, value=true,
+     cmm="|sigma^D|/tau0 (> 1 = hors domaine elastique)", ps="vonMisesratio.eps");
+
+// ============================================================
+// QUESTION 10 bis : Export VTK
+// ============================================================
+
+
+// Espace P1 discontinu pour la visualisation
+fespace Rh2(Th,P1dc);
+
+Rh2 X2des=x, Y2des=y, Z2des=0.;
+Rh2 devdes, presdes;
+int id2;
+
+// ------------------------------------------------------------
+// 1) Maillage non déformé
+// ------------------------------------------------------------
+
+ofstream par("Maillage."+Name+".vtk");
+
+par << "# vtk DataFile Version 2.0" << endl;
+par << "Maillage initial" << endl;
+par << "ASCII" << endl;
+par << "DATASET UNSTRUCTURED_GRID" << endl;
+
+par << "POINTS " << Rh2.ndof << " float" << endl;
+for(id2=0; id2<Rh2.ndof; id2++)
+    par << X2des[][id2] << " "
+        << Y2des[][id2] << " "
+        << Z2des[][id2] << endl;
+
+par << "CELLS " << Rh2.nt << " "
+    << (Rh2.ndofK+1)*Rh2.nt << endl;
+
+for(id2=0; id2<Rh2.nt; id2++)
+    par << "3 "
+        << Rh2(id2,0) << " "
+        << Rh2(id2,1) << " "
+        << Rh2(id2,2) << endl;
+
+par << "CELL_TYPES " << Rh2.nt << endl;
+for(id2=0; id2<Rh2.nt; id2++)
+    par << "5" << endl;
+
+
+
+// ------------------------------------------------------------
+// 2) Pièce déformée
+// ------------------------------------------------------------
+
+ofstream paru2("Resultats_Lagrange_"+Name+".vtk");
+
+
+
+X2des = x + mag*ux2;
+Y2des = y + mag*uy2;
+
+paru2 << "# vtk DataFile Version 2.0" << endl;
+paru2 << "Piece deformee" << endl;
+paru2 << "ASCII" << endl;
+paru2 << "DATASET UNSTRUCTURED_GRID" << endl;
+
+paru2 << "POINTS " << Rh2.ndof << " float" << endl;
+for(id2=0; id2<Rh2.ndof; id2++)
+    paru2 << X2des[][id2] << " "
+          << Y2des[][id2] << " "
+          << Z2des[][id2] << endl;
+
+paru2 << "CELLS " << Rh2.nt << " "
+      << (Rh2.ndofK+1)*Rh2.nt << endl;
+
+for(id2=0; id2<Rh2.nt; id2++)
+    paru2 << "3 "
+         << Rh2(id2,0) << " "
+         << Rh2(id2,1) << " "
+         << Rh2(id2,2) << endl;
+
+paru2 << "CELL_TYPES " << Rh2.nt << endl;
+for(id2=0; id2<Rh2.nt; id2++)
+    paru2 << "5" << endl;
+
+
+// ------------------------------------------------------------
+// Champs scalaires
+// ------------------------------------------------------------
+
+paru2 << "POINT_DATA " << Rh2.ndof << endl;
+
+// Déviateur
+devdes = normSD;
+
+paru2 << "SCALARS Deviateur float" << endl;
+paru2 << "LOOKUP_TABLE default" << endl;
+
+for(id2=0; id2<Rh2.ndof; id2++)
+    paru2 << devdes[][id2] << endl;
+
+
+// Pression moyenne
+presdes = p3;
+
+paru2 << "SCALARS PressionMoyenne float" << endl;
+paru2 << "LOOKUP_TABLE default" << endl;
+
+for(id2=0; id2<Rh2.ndof; id2++)
+    paru2 << presdes[][id2] << endl;
+
+
+// Rapport de von Mises
+devdes = vonMisesRatio;
+
+paru2 << "SCALARS VonMisesRatio float" << endl;
+paru2 << "LOOKUP_TABLE default" << endl;
+
+for(id2=0; id2<Rh2.ndof; id2++)
+    paru2 << devdes[][id2] << endl;
+
+
+// ------------------------------------------------------------
+// Champ vectoriel déplacement
+// ------------------------------------------------------------
+
+Rh2 UxVis = ux2;
+Rh2 UyVis = uy2;
+
+paru2 << "VECTORS Deplacement float" << endl;
+
+for(id2=0; id2<Rh2.ndof; id2++)
+{
+    paru2 << UxVis[][id2] << " "
+          << UyVis[][id2] << " "
+         << 0.0 << endl;
+}
+

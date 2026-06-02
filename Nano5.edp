@@ -318,7 +318,7 @@ macro WriteVTK( fname, istep)
 // eTAPE -1 : MAILLAGE VIERGE (avant tout chargement)
 // On ecrit simplement les coordonnees du maillage, deplacement nul
 // =====================================================================
-cout << endl << ">>> etape 0/VTK : maillage vierge (u=0, pas de charge)" << endl;
+cout << ">>> etape 0/VTK : maillage vierge (u=0, pas de charge)" << endl;
 u1 = 0.;  u2 = 0.;
 WriteVTK("Solid"+Name+"t000mesh.vtk", -1)
 
