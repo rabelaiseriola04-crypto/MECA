@@ -187,14 +187,14 @@ fespace Vh0(Th, P1);   // espace pour les contraintes
 Vh0 s11, s22, s12, s33;
 
 // Contraintes
-s11 = lam*(dx(ux2)+dy(uy2)) + 2.*mu*dx(ux2);
-s22 = lam*(dx(ux2)+dy(uy2)) + 2.*mu*dy(uy2);
-s12 = 2.*mu*0.5*(dy(ux2)+dx(uy2));
 s33 = lam*(dx(ux2)+dy(uy2));   // contrainte hors plan (deformations planes)
+s11 = s33 + 2.*mu*dx(ux2);
+s22 = s33 + 2.*mu*dy(uy2);
+s12 = 2.*mu*0.5*(dy(ux2)+dx(uy2));
 
 // Pression hydrostatique p = tr(sigma)/3 (en 3D, avec sigma33)
 Vh0 trSig = s11 + s22 + s33;
-Vh0 p3    = trSig / 3.;
+Vh0 p3    = trSig / 3.;//Contrainte moyenne
 
 // Deviateur : s^Dij = sij - p * deltaij
 Vh0 sD11 = s11 - p3;
@@ -203,7 +203,7 @@ Vh0 sD33 = s33 - p3;
 
 // |sigma^D|^2 = sD11^2 + sD22^2 + sD33^2 + 2*s12^2
 Vh0 normSD2 = sD11^2 + sD22^2 + sD33^2 + 2.*s12^2;
-Vh0 normSD  = sqrt(normSD2);
+Vh0 normSD  = sqrt(1.5*normSD2);
 
 plot(normSD, wait=0, fill=true, value=true,
      cmm="|sigma^D| (deviateur de contrainte, Lagrange)", ps="deviateur.eps");

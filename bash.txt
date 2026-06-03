@@ -1,4 +1,4 @@
-xvfb-run FreeFem++ Nano3.edp
+xvfb-run FreeFem++ exam.edp
 
 for f in *.eps; do convert "$f" "${f%.eps}.png" && rm "$f"; done
 
@@ -8,3 +8,8 @@ for f in *.eps; do
 done
 
 nanoparticule_substrat_newton
+
+git status
+git add .
+git commit -m "rr"
+git push

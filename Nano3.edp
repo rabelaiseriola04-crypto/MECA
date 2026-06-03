@@ -322,6 +322,27 @@ mesh ThSA = adaptmesh(ThS, SmeshS, hmin=hminS, hmax=hmaxS,
                       IsMetric=1, err=0.01, nbvx=50000);
 plot(ThSA,  wait=false, cmm="Maillage solide raffine", ps="SolidMeshRefined.eps");
 
+fespace R2h(ThSA,P1dc);
+R2h X2des=x, Y2des=y, Z2des=0, dev2des;
+int id2;
+
+{
+    ofstream par("Maillage2."+Name+".vtk");
+    par <<"# vtk DataFile Version 1.0"<<endl;
+    par <<"2D Fluid Mesh"<<endl;
+    par <<"ASCII"<<endl<<" "<<endl;
+    par <<"DATASET UNSTRUCTURED_GRID"<<endl;
+    par <<"POINTS "<<R2h.ndof<<" float"<<endl;
+    for (id2=0; id2<R2h.ndof; id2++)
+        par<< X2des[][id2] <<" "<< Y2des[][id2] <<" "<< Z2des[][id2] <<endl;
+    par <<"CELLS "<<R2h.nt<<" "<<(R2h.ndofK+1)*R2h.nt<<endl;
+    for (id2=0; id2<R2h.nt; id2++)
+        par<<"3 "<<R2h(id2,0)<<" "<<R2h(id2,1)<<" "<<R2h(id2,2)<<endl;
+    par <<" "<<endl<<"CELL_TYPES "<<R2h.nt<<endl;
+    for (id2=0; id2<R2h.nt; id2++) par<<"5"<<endl;
+}
+
+
 // =====================================================================
 // ESPACES EF SOLIDE — P2 pour les déplacements
 // =====================================================================
