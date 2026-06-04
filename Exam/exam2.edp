@@ -1,4 +1,4 @@
-string Name = "CarreTrou";
+string Name = "CarreTrou2";
 // ============================================================
 // Examen Mecanique Numerique/Solides -- MACS2 2025-2026
 // Deformation d'un carre avec un trou
@@ -38,11 +38,12 @@ border Cgauche(t=a,-a){ x=-a;        y=t; label=4; }
 
 // Trou circulaire (sens horaire pour que la normale pointe vers l'exterieur du domaine)
 border Ctrou (t=0,1){ x=R*cos(-2*pi*t); y=R*sin(-2*pi*t); label=5; }
+border Ctrou2 (t=0,1){ x=(R/2)*cos(-2*pi*t); y=(R/2)*sin(-2*pi*t); label=6; }
 int n = 20;  // finesse du maillage
 
-mesh Th = buildmesh( Cbas(n) + Cgauche(n) + Chaut(n) + Cdroite(n) + Ctrou(4*n) );
+mesh Th = buildmesh( Cbas(n) + Cgauche(n) + Chaut(n) + Cdroite(n) + Ctrou(4*n) + Ctrou2(4*n) );
 
-plot(Th, wait=0, ps="maillage.eps");
+plot(Th, wait=0, ps="maillage2.eps");
 
 // ============================================================
 // QUESTION 7 : EF P2, penalisation
@@ -67,16 +68,17 @@ problem ElasticPenal(ux,uy, vx,vy) =
     + int1d(Th,5)(
        (1./eps) * (ux*N.x + uy*N.y) * (vx*N.x + vy*N.y)
     )
-     - int1d(Th,2)( -Fload*vx );
+     - int1d(Th,2)( -Fload*vx )
+     +on(6,ux=0, uy=0);  // penalisation du trou (label 6)
 ElasticPenal;
 
 // Deplacement total
 Vh2 unormp = sqrt(ux^2 + uy^2);
 
 plot([ux,uy], wait=0, fill=true, value=true,
-     cmm="Penalisation : champ de deplacement", ps="deplpenal.eps");
+     cmm="Penalisation : champ de deplacement", ps="deplpenal2.eps");
 plot(unormp, wait=0, fill=true, value=true,
-     cmm="Penalisation : norme du deplacement", ps="normpenal.eps");
+     cmm="Penalisation : norme du deplacement", ps="normpenal2.eps");
 
 
 // Sauvegarde des solutions pénalisées
@@ -146,14 +148,15 @@ problem ElasticLagrange(ux2,uy2,p,vx2,vy2,q) =
     )
     + int1d(Th,5)( q*ux2 - p*vx2  )
     +int2d(Th)(p*q*eps)// renndre la matrice inversible  avec une petite perturbation
-    - int1d(Th,2)( -Fload*vx2 );
+    - int1d(Th,2)( -Fload*vx2 )
+    +on(6,ux2=0, uy2=0);  // conditions de Dirichlet sur le trou
 
 ElasticLagrange;
 // Deplacement total
 Vhmix unormp2 = sqrt(ux2^2 + uy2^2);
 
 plot([ux2,uy2], wait=0, fill=true, value=true,
-     cmm="Lagrange : champ de deplacement", ps="depllagrange.eps");
+     cmm="Lagrange : champ de deplacement", ps="depllagrange2.eps");
 
 // ============================================================
 // QUESTION 9 : Visualisation et comparaison
@@ -174,7 +177,7 @@ cout << "Deplacement max (Lagrange)       = " << uMax2 << endl;
 cout << "Erreur relative                 = " << errMax/uMax << endl;
 
 plot(errNorm, wait=0, fill=true, value=true,
-     cmm="|upenal - uLagrange|", ps="erreurcomparaison.eps");
+     cmm="|upenal - uLagrange|", ps="erreurcomparaison2.eps");
 
 // ============================================================
 // QUESTION 10 : Deviateur de contrainte et critere de von Mises
@@ -205,7 +208,7 @@ Vh0 normSD2 = sD11^2 + sD22^2 + sD33^2 + 2.*s12^2;
 Vh0 normSD  = sqrt(1.5*normSD2);
 
 plot(normSD, wait=0, fill=true, value=true,
-     cmm="|sigma^D| (deviateur de contrainte, Lagrange)", ps="deviateur.eps");
+     cmm="|sigma^D| (deviateur de contrainte, Lagrange)", ps="deviateur2.eps");
 
 // Critere de von Mises : |sigma^D| < tau0
 // Fmax tel que le max de |sigma^D| = tau0
@@ -221,7 +224,7 @@ cout << "Fmax (critere von Mises, tau0=" << tau0 << ") = " << Fmax << endl;
 // Visualisation de la zone plastifiee (|sigD| / tau0 > 1 signifie plastification)
 Vh0 vonMisesRatio = normSD / tau0;
 plot(vonMisesRatio, wait=0, fill=true, value=true,
-     cmm="|sigma^D|/tau0 (> 1 = hors domaine elastique)", ps="vonMisesratio.eps");
+     cmm="|sigma^D|/tau0 (> 1 = hors domaine elastique)", ps="vonMisesratio2.eps");
 
 // ============================================================
 // QUESTION 10 bis : Export VTK
