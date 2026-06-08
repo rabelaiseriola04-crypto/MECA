@@ -13,7 +13,7 @@ real Fload = 0.1;
 real lam   = 1.0;   // coefficient de Lame lambda
 real mu    = 1.0;   // coefficient de Lame mu
 real R     = 0.3;   // rayon du trou (a adapter)
-real eps   = 1e-5;  // parametre de penalisation
+real eps   = 1e-16;  // parametre de penalisation
 
 
 // Deviateur de contrainte : |sigma^D|^2 = sigma:sigma - (trσ)^2/2
@@ -144,7 +144,7 @@ problem ElasticLagrange(ux2,uy2,p,vx2,vy2,q) =
                 + eps22(ux2,uy2)*eps22(vx2,vy2)
                 + 2.*eps12(ux2,uy2)*eps12(vx2,vy2) )
     )
-    + int1d(Th,5)( q*ux2 - p*vx2  )
+    + int1d(Th,5)( q*(ux2*N.x + uy2*N.y) - p*(vx2*N.x + vy2*N.y) )
     +int2d(Th)(p*q*eps)// renndre la matrice inversible  avec une petite perturbation
     - int1d(Th,2)( -Fload*vx2 );
 
